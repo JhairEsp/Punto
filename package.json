@@ -1,0 +1,31 @@
+{
+  "name": "punto-asistencia",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:server\" \"npm:client\"",
+    "client": "vite --host 0.0.0.0",
+    "server": "node --watch server/index.js",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "^5.2.6",
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^6.1.0"
+  }
+}
