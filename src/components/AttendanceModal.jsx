@@ -80,7 +80,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
   const chooseFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { setCameraError('La foto supera 8 MB. Toma una foto con la cámara.'); return; }
+    if (file.size > 4 * 1024 * 1024) { setCameraError('La foto supera 4 MB, el límite de Vercel. Toma una foto con la cámara para optimizarla.'); return; }
     if (photoUrl) URL.revokeObjectURL(photoUrl);
     setPhoto(file); setPhotoUrl(URL.createObjectURL(file)); stopCamera(); setCameraState('captured'); setCameraError('');
   };

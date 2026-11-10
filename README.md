@@ -1,6 +1,31 @@
 # Punto · Control de asistencias
 
-Aplicación mobile-first creada con **React + Vite**, **Express** y **SQLite**. Registra entradas y salidas con evidencia fotográfica, coordenadas GPS, precisión y fecha/hora.
+Aplicación mobile-first con **React + Vite**, preparada para desplegarse en **Vercel** y usar **Supabase PostgreSQL + Storage** como servicios de datos.
+
+## Arquitectura
+
+```text
+Celular / navegador
+        │
+        ▼
+React + Vite (sitio estático en Vercel)
+        │ HTTPS /api/*
+        ▼
+Función serverless de Vercel: api/[...route].js
+        │ SUPABASE_SERVICE_ROLE_KEY (solo servidor)
+        ├──────────────► Supabase PostgreSQL
+        │                  usuarios, horarios y asistencias
+        └──────────────► Supabase Storage
+                           fotos privadas + URLs firmadas
+```
+
+- **Frontend:** `src/`, compilado a `dist/` con Vite.
+- **API:** `server/app.js`, compartida entre desarrollo local y Vercel.
+- **Handler serverless:** `api/[...route].js`.
+- **Base de datos:** tablas `public.users` y `public.attendance`.
+- **Fotos:** bucket privado `attendance-photos`; no se guardan en Vercel ni en PostgreSQL.
+- **Autenticación:** JWT propio emitido por la API, con cookie httpOnly, Authorization y encabezado alternativo. Contraseñas cifradas con bcrypt.
+- **Seguridad:** RLS y permisos públicos revocados. La clave `SERVICE_ROLE` nunca usa el prefijo `VITE_` ni llega al navegador.
 
 ## Acceso inicial
 
@@ -8,68 +33,100 @@ Aplicación mobile-first creada con **React + Vite**, **Express** y **SQLite**. 
 - **Contraseña:** `Velcco2026@`
 - **Rol:** SuperAdmin
 
-La cuenta se crea automáticamente al iniciar el servidor por primera vez. Las contraseñas se guardan con bcrypt, nunca en texto plano.
+## 1. Configurar Supabase
 
-## Ejecutar en desarrollo
+1. Crea un proyecto en Supabase.
+2. Abre **SQL Editor** y ejecuta todo `supabase/schema.sql`.
+3. Copia `.env.example` a `.env` y completa:
+
+```env
+SUPABASE_URL=https://tu-proyecto.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=tu-service-role-key
+SUPABASE_BUCKET=attendance-photos
+JWT_SECRET=un-secreto-aleatorio-de-al-menos-32-caracteres
+PORT=3001
+```
+
+4. Crea el SuperAdmin y confirma el bucket:
 
 ```bash
 npm install
+npm run setup:supabase
+```
+
+> La clave `service_role` es privada. No la uses en React, no la publiques y no la reemplaces por una variable `VITE_*`.
+
+## 2. Desarrollo local
+
+```bash
 npm run dev
 ```
 
-- Aplicación: `http://localhost:5173`
-- API: `http://localhost:3001`
+- Frontend Vite: `http://localhost:5173`
+- API local idéntica a la función de Vercel: `http://localhost:3001`
 
-## Producción
+Para probar todo mediante el emulador de Vercel:
 
 ```bash
-npm run build
-JWT_SECRET="un-secreto-largo-y-aleatorio" npm start
+npx vercel dev
 ```
 
-El servidor Express sirve tanto la API como la aplicación compilada en el puerto `3001`.
+## 3. Desplegar en Vercel
+
+1. Sube el proyecto a GitHub, GitLab o Bitbucket.
+2. Importa el repositorio en Vercel.
+3. Vercel detectará Vite mediante `vercel.json`:
+   - Build: `npm run build`
+   - Salida: `dist`
+   - API: `api/[...route].js`
+4. En **Project → Settings → Environment Variables**, agrega:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `SUPABASE_BUCKET=attendance-photos`
+   - `JWT_SECRET`
+5. Despliega:
+
+```bash
+npx vercel --prod
+```
+
+No subas `.env` al repositorio. Configura las variables por separado para Production, Preview y Development según corresponda.
 
 ## Funcionalidades
 
 - Acceso seguro mediante JWT y contraseñas cifradas.
 - Panel con presentes, entradas, salidas y actividad reciente.
 - Alta, edición, activación y desactivación de colaboradores.
-- Asignación de nombre, usuario, contraseña y puesto.
-- Marcación de entrada/salida con cámara en vivo o foto de galería.
-- Captura GPS de alta precisión bajo demanda; no hay rastreo en segundo plano.
-- Validación para alternar entradas y salidas.
-- Historial filtrado por fecha, colaborador y tipo de marcación.
 - Horario individual de ingreso y salida para cada trabajador.
-- Cálculo y almacenamiento de tardanza, salida anticipada y tiempo extra por marcación.
-- Reportes de SuperAdmin por mes, día o rango de fechas, con resumen por persona y detalle diario.
-- Detalle de foto y enlace de coordenadas en Google Maps.
+- Marcación con cámara en vivo o galería y GPS de alta precisión.
+- Fotos JPG optimizadas y coordenadas numéricas `double precision`.
+- URLs firmadas temporales para proteger las evidencias.
+- Cálculo y almacenamiento de tardanza, salida anticipada y tiempo extra.
+- Reportes por mes, día o rango de fechas, con resumen por persona y detalle diario.
 - Exportación de marcaciones y reportes a CSV compatible con Excel.
-- Diseño responsive con navegación móvil inferior y panel lateral en escritorio.
-- Animaciones basadas principalmente en `transform` y `opacity`, con soporte para `prefers-reduced-motion`.
+- Diseño responsive y animaciones con soporte para `prefers-reduced-motion`.
 
-## Datos y almacenamiento
-
-- Base SQLite: `server/data/punto.db`
-- Fotografías: `server/uploads/`
-- Zona horaria de reportes: `America/Lima`
-- Tamaño máximo de fotografía: 8 MB
-- Las capturas de cámara se optimizan y guardan como archivos binarios JPG.
-- Latitud, longitud y precisión se almacenan como valores numéricos en SQLite.
-- Cada marcación conserva una copia del horario vigente para proteger los cálculos históricos.
-
-### Cálculo de jornada
+## Cálculo de jornada
 
 - **Tardanza:** minutos entre la hora programada de ingreso y la primera entrada.
 - **Tiempo extra:** minutos entre la hora programada de salida y la salida registrada.
 - **Salida anticipada:** minutos entre la salida registrada y el horario programado.
 - **Tiempo trabajado:** diferencia entre la primera entrada y la última salida del mismo día.
+- Cada marcación conserva una copia del horario vigente para proteger el historial.
+- Zona horaria de reportes: `America/Lima`.
 
-> La cámara y la geolocalización del navegador requieren un contexto seguro: HTTPS o `localhost`. Al probar desde un celular, abre la aplicación mediante su dirección HTTPS y acepta ambos permisos.
+## Límites y permisos
+
+- Fotografías: máximo **4 MB**, compatible con el límite de solicitudes de Vercel.
+- Las capturas de cámara se reducen antes de enviarse.
+- La cámara y la geolocalización requieren HTTPS o `localhost`.
+- El GPS se captura solo durante la marcación; no hay rastreo en segundo plano.
 
 ## API principal
 
 - `POST /api/auth/login`
 - `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `GET /api/dashboard`
 - `GET /api/users` *(SuperAdmin)*
 - `POST /api/users` *(SuperAdmin)*
@@ -80,3 +137,7 @@ El servidor Express sirve tanto la API como la aplicación compilada en el puert
 - `GET /api/reports?month=YYYY-MM` o `?from=YYYY-MM-DD&to=YYYY-MM-DD` *(SuperAdmin)*
 - `GET /api/reports/export` *(SuperAdmin)*
 - `GET /api/export` *(SuperAdmin)*
+
+## Respaldo anterior
+
+El archivo SQLite anterior, si existe en `server/data/punto.db`, se conserva únicamente como respaldo local. **Ya no forma parte de la arquitectura activa ni se incluye en el despliegue.**
