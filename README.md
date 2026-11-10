@@ -11,7 +11,8 @@ Celular / navegador
 React + Vite (sitio estático en Vercel)
         │ HTTPS /api/*
         ▼
-Función serverless de Vercel: api/[...route].js
+Función serverless de Vercel: api/index.js
+        │ (vercel.json reescribe /api/* → /api)
         │ SUPABASE_SERVICE_ROLE_KEY (solo servidor)
         ├──────────────► Supabase PostgreSQL
         │                  usuarios, horarios y asistencias
@@ -21,7 +22,7 @@ Función serverless de Vercel: api/[...route].js
 
 - **Frontend:** `src/`, compilado a `dist/` con Vite.
 - **API:** `server/app.js`, compartida entre desarrollo local y Vercel.
-- **Handler serverless:** `api/[...route].js`.
+- **Handler serverless:** `api/index.js`. El `rewrite` de `vercel.json` envía todo `/api/*` a esa única función y Express recibe la URL original.
 - **Base de datos:** tablas `public.users` y `public.attendance`.
 - **Fotos:** bucket privado `attendance-photos`; no se guardan en Vercel ni en PostgreSQL.
 - **Autenticación:** JWT propio emitido por la API, con cookie httpOnly, Authorization y encabezado alternativo. Contraseñas cifradas con bcrypt.
@@ -78,7 +79,7 @@ npx vercel dev
 3. Vercel detectará Vite mediante `vercel.json`:
    - Build: `npm run build`
    - Salida: `dist`
-   - API: `api/[...route].js`
+   - API: `api/index.js` (todas las rutas `/api/*` llegan por el `rewrite`)
 4. En **Project → Settings → Environment Variables**, agrega:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
