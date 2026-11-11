@@ -142,3 +142,7 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 ## Respaldo anterior
 
 El archivo SQLite anterior, si existe en `server/data/punto.db`, se conserva únicamente como respaldo local. **Ya no forma parte de la arquitectura activa ni se incluye en el despliegue.**
+
+### Actualización: horarios por día
+
+Para una instalación existente, ejecuta `supabase/migrations/20261111_weekly_schedule.sql` en el SQL Editor de Supabase antes de desplegar la aplicación. Los usuarios existentes mantienen su horario anterior para todos los días; el SuperAdmin puede modificar cada día desde Mi equipo. Cada marcación conserva el horario aplicado, por lo que los reportes anteriores no cambian. Los horarios se interpretan en America/Lima.

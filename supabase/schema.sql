@@ -14,6 +14,7 @@ create table if not exists public.users (
   avatar_color text not null default '#D9F99D',
   scheduled_entry time not null default '08:00',
   scheduled_exit time not null default '17:00',
+  weekly_schedule jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -43,7 +44,8 @@ select
   u.scheduled_entry, u.scheduled_exit, u.created_at,
   (select a.type from public.attendance a where a.user_id = u.id order by a.id desc limit 1) as last_type,
   (select a.created_at from public.attendance a where a.user_id = u.id order by a.id desc limit 1) as last_attendance,
-  (select count(*) from public.attendance a where a.user_id = u.id) as attendance_count
+  (select count(*) from public.attendance a where a.user_id = u.id) as attendance_count,
+  u.weekly_schedule
 from public.users u;
 
 -- La API usa exclusivamente SERVICE_ROLE. El frontend nunca recibe esa clave.

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import crypto from 'crypto';
+import { shortTime, validTime as validSchedule, validWeeklySchedule, weeklySchedule, scheduleForDate } from './schedule.js';
 import { getSupabase, supabaseConfigured, unwrap, PHOTO_BUCKET } from './supabase.js';
 
 const app = express();
@@ -25,13 +26,11 @@ const dayRange = (day) => {
   return { start: new Date(Date.UTC(year, month - 1, date, 5)).toISOString(), end: new Date(Date.UTC(year, month - 1, date + 1, 5)).toISOString() };
 };
 const dateRange = (from, to) => ({ start: dayRange(from).start, end: dayRange(to).end });
-const shortTime = (value, fallback) => String(value || fallback || '').slice(0, 5);
 const publicUser = (u) => ({
   id: u.id, name: u.name, username: u.username, position: u.position, role: u.role,
   active: !!u.active, avatarColor: u.avatar_color, createdAt: u.created_at,
-  scheduledEntry: shortTime(u.scheduled_entry, '08:00'), scheduledExit: shortTime(u.scheduled_exit, '17:00'),
+  scheduledEntry: scheduleForDate(u).entry, scheduledExit: scheduleForDate(u).exit, weeklySchedule: weeklySchedule(u),
 });
-const validSchedule = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
 const minutesOfSchedule = (value) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
 const minutesInLima = (isoDate) => {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -53,6 +52,16 @@ const calculateScheduleTimes = (type, createdAt, scheduledEntry, scheduledExit) 
     earlyLeaveMinutes = Math.max(0, expectedExit - actualExit);
   }
   return { lateMinutes, overtimeMinutes, earlyLeaveMinutes };
+};
+const scheduleForAttendance = (user, last, type, date) => {
+  const schedule = scheduleForDate(user, date);
+  if (type === 'exit' && last?.type === 'entry' && last.scheduled_entry && last.scheduled_exit) {
+    const entry = shortTime(last.scheduled_entry), exit = shortTime(last.scheduled_exit);
+    const previousDay = new Date(`${limaDate(date)}T12:00:00Z`);
+    previousDay.setUTCDate(previousDay.getUTCDate() - 1);
+    if (exit < entry && limaDate(last.created_at) === previousDay.toISOString().slice(0, 10)) return { entry, exit };
+  }
+  return schedule;
 };
 const cookieOptions = (req) => ({ httpOnly: true, secure: !!req.secure, sameSite: req.secure ? 'none' : 'lax', path: '/' });
 const setSessionCookie = (req, res, token) => res.cookie(SESSION_COOKIE, token, { ...cookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
@@ -115,16 +124,17 @@ app.get('/api/users', auth, adminOnly, async (req, res, next) => {
 });
 app.post('/api/users', auth, adminOnly, async (req, res, next) => {
   try {
-    const { name, username, password, position, scheduledEntry = '08:00', scheduledExit = '17:00' } = req.body || {};
+    const { name, username, password, position, scheduledEntry = '08:00', scheduledExit = '17:00', weeklySchedule: requestedSchedule } = req.body || {};
     if (![name, username, password, position].every(value => String(value || '').trim())) return res.status(400).json({ message: 'Completa todos los campos.' });
     if (String(password).length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres.' });
     if (!/^[a-zA-Z0-9._-]{3,30}$/.test(String(username).trim())) return res.status(400).json({ message: 'El usuario debe tener 3–30 caracteres, sin espacios.' });
     if (!validSchedule(scheduledEntry) || !validSchedule(scheduledExit)) return res.status(400).json({ message: 'Define un horario de entrada y salida válido.' });
+    if (requestedSchedule !== undefined && !validWeeklySchedule(requestedSchedule)) return res.status(400).json({ message: 'Define una entrada y salida válida para cada día.' });
     const colors = ['#D9F99D', '#BAE6FD', '#FED7AA', '#DDD6FE', '#FBCFE8', '#A7F3D0'];
     const user = unwrap(await getSupabase().from('users').insert({
       name: String(name).trim(), username: String(username).trim(), password_hash: bcrypt.hashSync(password, 12),
       position: String(position).trim(), role: 'employee', active: true,
-      avatar_color: colors[Math.floor(Math.random() * colors.length)], scheduled_entry: scheduledEntry, scheduled_exit: scheduledExit, created_at: now(),
+      avatar_color: colors[Math.floor(Math.random() * colors.length)], scheduled_entry: scheduledEntry, scheduled_exit: scheduledExit, weekly_schedule: requestedSchedule || null, created_at: now(),
     }).select('*').single());
     res.status(201).json({ user: publicUser(user) });
   } catch (error) {
@@ -137,15 +147,16 @@ app.patch('/api/users/:id', auth, adminOnly, async (req, res, next) => {
     const supabase = getSupabase();
     const current = unwrap(await supabase.from('users').select('*').eq('id', req.params.id).maybeSingle());
     if (!current) return res.status(404).json({ message: 'Usuario no encontrado.' });
-    const { name, position, active, password, scheduledEntry = shortTime(current.scheduled_entry), scheduledExit = shortTime(current.scheduled_exit) } = req.body || {};
+    const { name, position, active, password, scheduledEntry = shortTime(current.scheduled_entry), scheduledExit = shortTime(current.scheduled_exit), weeklySchedule: requestedSchedule } = req.body || {};
     if (current.id === req.user.id && active === false) return res.status(400).json({ message: 'No puedes desactivar tu propia cuenta.' });
     if (password && String(password).length < 6) return res.status(400).json({ message: 'La contraseña debe tener al menos 6 caracteres.' });
     if (!validSchedule(scheduledEntry) || !validSchedule(scheduledExit)) return res.status(400).json({ message: 'Define un horario de entrada y salida válido.' });
+    if (requestedSchedule !== undefined && !validWeeklySchedule(requestedSchedule)) return res.status(400).json({ message: 'Define una entrada y salida válida para cada día.' });
     const user = unwrap(await supabase.from('users').update({
       name: String(name || current.name).trim(), position: String(position || current.position).trim(),
       active: active === undefined ? current.active : !!active,
       password_hash: password ? bcrypt.hashSync(String(password), 12) : current.password_hash,
-      scheduled_entry: scheduledEntry, scheduled_exit: scheduledExit,
+      scheduled_entry: scheduledEntry, scheduled_exit: scheduledExit, weekly_schedule: requestedSchedule === undefined ? current.weekly_schedule : requestedSchedule,
     }).eq('id', current.id).select('*').single());
     res.json({ user: publicUser(user) });
   } catch (error) { next(error); }
@@ -163,7 +174,8 @@ app.get('/api/attendance/status', auth, async (req, res, next) => {
     const range = dayRange(todayLima());
     const countResult = await supabase.from('attendance').select('id', { count: 'exact', head: true }).eq('user_id', req.user.id).gte('created_at', range.start).lt('created_at', range.end);
     if (countResult.error) throw countResult.error;
-    res.json({ last: last || null, nextType: last?.type === 'entry' ? 'exit' : 'entry', todayCount: countResult.count || 0, scheduledEntry: shortTime(req.user.scheduled_entry), scheduledExit: shortTime(req.user.scheduled_exit) });
+    const schedule = scheduleForAttendance(req.user, last, last?.type === 'entry' ? 'exit' : 'entry', now());
+    res.json({ last: last || null, nextType: last?.type === 'entry' ? 'exit' : 'entry', todayCount: countResult.count || 0, scheduledEntry: schedule.entry, scheduledExit: schedule.exit });
   } catch (error) { next(error); }
 });
 app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next) => {
@@ -174,13 +186,13 @@ app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next)
     const lat = Number(latitude), lng = Number(longitude);
     if (!['entry', 'exit'].includes(type) || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ message: 'Necesitamos una ubicación GPS válida.' });
     const supabase = getSupabase();
-    const last = unwrap(await supabase.from('attendance').select('type').eq('user_id', req.user.id).order('id', { ascending: false }).limit(1).maybeSingle());
+    const last = unwrap(await supabase.from('attendance').select('type,created_at,scheduled_entry,scheduled_exit').eq('user_id', req.user.id).order('id', { ascending: false }).limit(1).maybeSingle());
     if (last?.type === type) return res.status(409).json({ message: `Tu última marcación ya fue una ${type === 'entry' ? 'entrada' : 'salida'}. Actualiza e inténtalo de nuevo.` });
     const extension = req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg';
     photoPath = `${req.user.id}/${Date.now()}-${crypto.randomUUID()}${extension}`;
     unwrap(await supabase.storage.from(PHOTO_BUCKET).upload(photoPath, req.file.buffer, { contentType: req.file.mimetype, upsert: false }));
     const createdAt = now();
-    const scheduledEntry = shortTime(req.user.scheduled_entry, '08:00'), scheduledExit = shortTime(req.user.scheduled_exit, '17:00');
+    const { entry: scheduledEntry, exit: scheduledExit } = scheduleForAttendance(req.user, last, type, createdAt);
     const { lateMinutes, overtimeMinutes, earlyLeaveMinutes } = calculateScheduleTimes(type, createdAt, scheduledEntry, scheduledExit);
     const record = unwrap(await supabase.from('attendance').insert({
       user_id: req.user.id, type, photo: photoPath, latitude: lat, longitude: lng, accuracy: Number(accuracy) || null,
