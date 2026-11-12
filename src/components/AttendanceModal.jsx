@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Camera, Check, CheckCircle2, Clock3, Crosshair, ImagePlus, LoaderCircle, MapPin, Navigation, RefreshCw, ShieldCheck, SwitchCamera } from 'lucide-react';
 import { api } from '../api.js';
-import { formatMinutes, formatTime } from '../utils.js';
+import { formatDate, formatMinutes, formatTime, maxExitTime } from '../utils.js';
 import { CloseButton, Modal, Spinner } from './UI.jsx';
 
 export default function AttendanceModal({ user, onClose, onRecorded, onViewHistory }) {
@@ -18,6 +18,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
   const [facingMode, setFacingMode] = useState('user');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [blocked, setBlocked] = useState(null);
   const [success, setSuccess] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -41,7 +42,12 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
     );
   };
   const loadStatus = async () => {
-    try { const data = await api('/attendance/status'); setStatus(data); setType(data.nextType); } catch (err) { setError(err.message); }
+    try {
+      const data = await api('/attendance/status');
+      setStatus(data); setType(data.nextType);
+      // La salida venció sin marcarse: se informa el plazo y se deja registrar una nueva entrada.
+      setBlocked(data.priorExit ? { message: data.priorExit.message, deadline: data.priorExit.deadline, day: data.priorExit.day, lateMark: data.priorExit.lateMark } : null);
+    } catch (err) { setError(err.message); }
   };
   useEffect(() => { locate(); loadStatus(); return () => { stopCamera(); if (photoUrl) URL.revokeObjectURL(photoUrl); }; }, []);
   useEffect(() => {
@@ -95,7 +101,10 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
     try {
       const data = await api('/attendance', { method: 'POST', body });
       setSuccess(data.record); stopCamera(); onRecorded(data.message);
-    } catch (err) { setError(err.message); } finally { setSubmitting(false); }
+    } catch (err) {
+      setError(err.message);
+      if (err.status === 409) loadStatus();
+    } finally { setSubmitting(false); }
   };
 
   const entry = type === 'entry';
@@ -104,9 +113,10 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
       <header className="attendance-modal-header"><div><span className="section-kicker">NUEVA MARCACIÓN</span><h2 id="attendance-title">Registra tu momento<span>.</span></h2></div><CloseButton onClick={onClose} /></header>
       <div className="attendance-progress"><span className={photo ? 'done' : 'active'}><i>{photo ? <Check size={12} /> : '1'}</i> Foto</span><b /><span className={location ? 'done' : ''}><i>{location ? <Check size={12} /> : '2'}</i> Ubicación</span><b /><span><i>3</i> Confirmar</span></div>
       <div className="attendance-modal-scroll">
-        <div className="attendance-type-switch"><button className={entry ? 'active entry' : ''} onClick={() => setType('entry')}><ArrowDownLeft size={19} /><span><strong>Entrada</strong><small>Comienzo mi jornada</small></span>{entry && <Check size={16} />}</button><button className={!entry ? 'active exit' : ''} onClick={() => setType('exit')}><ArrowUpRight size={19} /><span><strong>Salida</strong><small>Finalizo mi jornada</small></span>{!entry && <Check size={16} />}</button></div>
+        <div className="attendance-type-switch"><button className={entry ? 'active entry' : ''} disabled={!entry && !!status?.exitPending} title={!entry && status?.exitPending ? `Debes cerrar tu jornada: la salida se marca hasta las ${status.exitDeadline}.` : undefined} onClick={() => setType('entry')}><ArrowDownLeft size={19} /><span><strong>Entrada</strong><small>Comienzo mi jornada</small></span>{entry && <Check size={16} />}</button><button className={!entry ? 'active exit' : ''} disabled={entry && !!status?.priorExit} title={entry && status?.priorExit ? status.priorExit.message : undefined} onClick={() => setType('exit')}><ArrowUpRight size={19} /><span><strong>Salida</strong><small>{status?.priorExit ? 'Plazo vencido' : status?.exitPending ? `Hasta las ${status.exitDeadline}` : 'Finalizo mi jornada'}</small></span>{!entry && <Check size={16} />}</button></div>
         {status?.last && <div className="last-mark-note"><ClockIcon /><span>Última marcación: <strong>{status.last.type === 'entry' ? 'Entrada' : 'Salida'}</strong> · {formatTime(status.last.created_at)}</span></div>}
-        {status && <div className="attendance-schedule-note"><Clock3 size={14} /><span>Tu horario: <strong>{status.scheduledEntry || '08:00'} — {status.scheduledExit || '17:00'}</strong></span></div>}
+        {status && <div className="attendance-schedule-note"><Clock3 size={14} /><span>Tu horario: <strong>{status.scheduledEntry || '08:00'} — {status.scheduledExit || '17:00'}</strong> · plazo máximo de salida <strong>{maxExitTime({ entry: status.scheduledEntry, exit: status.scheduledExit })}</strong></span></div>}
+        {blocked && <div className="exit-window-note" role="status"><Clock3 size={16} /><div><strong>Salida sin marcar del {formatDate(blocked.day + 'T12:00:00', { day: '2-digit', month: 'long' })}</strong><span>{blocked.message} Puedes registrar tu siguiente entrada normalmente.</span></div></div>}
 
         <section className="capture-section"><div className="capture-section-heading"><div><span className="step-number">01</span><div><h3>Tu foto de asistencia</h3><p>Una selfie rápida para validar tu identidad.</p></div></div>{photo && <button className="text-button" onClick={retake}><RefreshCw size={14} /> Repetir</button>}</div>
           <div className={`camera-view ${cameraState === 'active' ? 'camera-active' : ''} ${photoUrl ? 'has-photo' : ''}`}>

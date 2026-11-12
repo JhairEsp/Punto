@@ -1,4 +1,7 @@
+import { EXIT_GRACE_MINUTES, exitDeadline } from '../shared/schedule.js';
+
 export const LIMA_TZ = 'America/Lima';
+export { EXIT_GRACE_MINUTES, exitDeadline };
 export const todayInput = () => new Intl.DateTimeFormat('en-CA', { timeZone: LIMA_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 export const formatTime = (date, seconds = false) => new Intl.DateTimeFormat('es-PE', { timeZone: LIMA_TZ, hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), hour12: true }).format(new Date(date));
 export const formatDate = (date, options = {}) => new Intl.DateTimeFormat('es-PE', { timeZone: LIMA_TZ, ...options }).format(new Date(date));
@@ -28,3 +31,14 @@ export const greeting = () => {
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: LIMA_TZ, hour: '2-digit', hour12: false }).format(new Date()));
   return hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
 };
+
+// Plazo máximo para marcar la salida: horario de salida + 5 minutos (la jornada nocturna vence al día siguiente).
+export const maxExitTime = (schedule = {}) => exitDeadline({ entry: schedule.entry || '08:00', exit: schedule.exit || '17:00' }).deadline;
+export const DAY_STATUS_LABELS = {
+  complete: 'Completo',
+  pending_exit: 'Dentro del plazo',
+  missing_exit: 'Sin marcar',
+  absent: 'Sin marcar',
+  missing_entry: 'Sin entrada',
+};
+export const dayStatusLabel = (status) => DAY_STATUS_LABELS[status] || 'Sin marcar';
