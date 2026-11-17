@@ -116,6 +116,17 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 - Cada marcación conserva una copia del horario vigente para proteger el historial.
 - Zona horaria de reportes: `America/Lima`.
 
+## Plazo para marcar la salida
+
+- La salida debe marcarse hasta **5 minutos después del horario de salida**: con horario 17:00, el plazo máximo es **17:05**.
+- Vencido el plazo, la jornada queda como **"sin marcar"** y la API rechaza la salida (la foto ni siquiera se sube al almacenamiento).
+- Los reportes también marcan **"sin marcar"** a todo colaborador activo que no registró nada en un día con horario asignado; no se generan ausencias anteriores a su alta.
+- Los días con la misma hora de entrada y salida se consideran días de descanso y no generan ausencias.
+- En las jornadas nocturnas (p. ej. 22:00 → 06:00) el plazo vence a las 06:05 del día siguiente.
+- Si la entrada se marcó con el plazo ya vencido, la salida dispone de sus propios 5 minutos desde esa marcación para no dejar la jornada sin cerrar.
+- Una jornada abierta que venció ya no cuenta como "presente" y se lista en el panel del SuperAdmin como *salida sin marcar*.
+- La regla vive en `shared/schedule.js` y la usan la API y el frontend, de modo que los plazos se muestran igual en el celular y en los reportes.
+
 ## Límites y permisos
 
 - Fotografías: máximo **4 MB**, compatible con el límite de solicitudes de Vercel.

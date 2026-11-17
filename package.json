@@ -10,6 +10,7 @@
     "build": "vite build",
     "start": "node --env-file-if-exists=.env server/index.js",
     "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test tests/schedule.test.js",
     "setup:supabase": "node --env-file=.env scripts/setup-supabase.js"
   },
   "dependencies": {

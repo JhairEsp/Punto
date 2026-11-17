@@ -13,6 +13,7 @@ export default function Workspace({ user, onLogout, notify }) {
   const admin = user.role === 'superadmin';
   const [tab, setTab] = useState('home');
   const [dashboard, setDashboard] = useState(null);
+  const [status, setStatus] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [markOpen, setMarkOpen] = useState(false);
@@ -22,8 +23,8 @@ export default function Workspace({ user, onLogout, notify }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [dash, team] = await Promise.all([api('/dashboard'), admin ? api('/users') : Promise.resolve([])]);
-      setDashboard(dash); setUsers(team);
+      const [dash, team, attendanceStatus] = await Promise.all([api('/dashboard'), admin ? api('/users') : Promise.resolve([]), api('/attendance/status')]);
+      setDashboard(dash); setUsers(team); setStatus(attendanceStatus);
     } catch (err) { notify(err.message, 'error'); }
     finally { setLoading(false); }
   }, [admin, notify]);
@@ -56,7 +57,7 @@ export default function Workspace({ user, onLogout, notify }) {
     <header className="mobile-header"><button className="mobile-logo-button" onClick={() => navigate('home')} aria-label="Ir al inicio"><Logo /></button><div className="mobile-header-right"><span className="secure-chip"><ShieldCheck size={14} /> Seguro</span><button onClick={() => navigate('profile')} aria-label="Abrir perfil"><Avatar user={user} /></button></div></header>
 
     <main className="workspace-main">
-      {tab === 'home' && <Dashboard user={user} data={dashboard} loading={loading} onMark={() => setMarkOpen(true)} onNavigate={navigate} />}
+      {tab === 'home' && <Dashboard user={user} data={dashboard} status={status} loading={loading} onMark={() => setMarkOpen(true)} onNavigate={navigate} />}
       {tab === 'team' && admin && <Team users={users} currentUser={user} loading={loading} onRefresh={refresh} onViewRecords={viewRecords} notify={notify} />}
       {tab === 'records' && <Records user={user} users={users} refreshKey={refreshKey} selectedUserId={selectedUserId} onSelectedUserChange={setSelectedUserId} onOpenReports={() => navigate('reports')} />}
       {tab === 'reports' && admin && <Reports users={users} onBack={() => navigate('records')} />}

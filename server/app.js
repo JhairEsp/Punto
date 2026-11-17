@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import crypto from 'crypto';
-import { shortTime, validTime as validSchedule, validWeeklySchedule, weeklySchedule, scheduleForDate } from './schedule.js';
+import { shortTime, validTime as validSchedule, validWeeklySchedule, weeklySchedule, scheduleForDate, limaDay, limaMinutes, addDays, exitDeadline, exitStatus } from './schedule.js';
 import { getSupabase, supabaseConfigured, unwrap, PHOTO_BUCKET } from './supabase.js';
 
 const app = express();
@@ -15,12 +15,8 @@ app.use(express.json({ limit: '1mb' }));
 const JWT_SECRET = process.env.JWT_SECRET || 'punto-local-secret-change-in-production-2026';
 const SESSION_COOKIE = 'punto_session';
 const now = () => new Date().toISOString();
-const todayLima = () => new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date());
-const limaDate = (value) => new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date(value));
+const todayLima = () => limaDay(now());
+const limaDate = (value) => limaDay(value);
 const dayRange = (day) => {
   const [year, month, date] = day.split('-').map(Number);
   return { start: new Date(Date.UTC(year, month - 1, date, 5)).toISOString(), end: new Date(Date.UTC(year, month - 1, date + 1, 5)).toISOString() };
@@ -32,12 +28,7 @@ const publicUser = (u) => ({
   scheduledEntry: scheduleForDate(u).entry, scheduledExit: scheduleForDate(u).exit, weeklySchedule: weeklySchedule(u),
 });
 const minutesOfSchedule = (value) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
-const minutesInLima = (isoDate) => {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(new Date(isoDate));
-  return Number(parts.find(part => part.type === 'hour').value) * 60 + Number(parts.find(part => part.type === 'minute').value);
-};
+const minutesInLima = (isoDate) => limaMinutes(isoDate);
 const calculateScheduleTimes = (type, createdAt, scheduledEntry, scheduledExit) => {
   const actual = minutesInLima(createdAt);
   const entry = minutesOfSchedule(scheduledEntry);
@@ -63,6 +54,20 @@ const scheduleForAttendance = (user, last, type, date) => {
   }
   return schedule;
 };
+// Mensajes del plazo de salida (5 minutos después del horario de salida).
+const LIMIT_MESSAGES = {
+  entry: 'Ese día la entrada se marcó después del plazo de salida, así que la salida ya no estaba disponible.',
+  exit: 'El plazo de 5 minutos después de tu horario de salida venció: la jornada quedó como "sin marcar".',
+};
+// Jornada abierta: la última marcación fue una entrada y todavía no tiene salida.
+const shiftWindow = (user, last, date = new Date()) => {
+  if (!last || last.type !== 'entry') return null;
+  const schedule = scheduleForAttendance(user, last, 'exit', date);
+  const day = limaDate(last.created_at);
+  const rule = exitStatus({ day, entryAt: last.created_at, exitAt: null, schedule, now: date });
+  return { schedule, day, rule, closed: rule.status === 'missing' };
+};
+
 const cookieOptions = (req) => ({ httpOnly: true, secure: !!req.secure, sameSite: req.secure ? 'none' : 'lax', path: '/' });
 const setSessionCookie = (req, res, token) => res.cookie(SESSION_COOKIE, token, { ...cookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
 const readCookie = (req, name) => {
@@ -119,7 +124,16 @@ app.get('/api/users', auth, adminOnly, async (req, res, next) => {
   try {
     const rows = unwrap(await getSupabase().from('user_attendance_summary').select('*').order('name'));
     rows.sort((a, b) => (a.role === 'superadmin' ? -1 : 0) - (b.role === 'superadmin' ? -1 : 0) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
-    res.json(rows.map(u => ({ ...publicUser(u), lastType: u.last_type, lastAttendance: u.last_attendance, attendanceCount: u.attendance_count || 0 })));
+    const reference = new Date();
+    res.json(rows.map(u => {
+      // La jornada sigue abierta solo si la entrada está dentro del plazo de salida.
+      const shift = shiftWindow(u, u.last_type === 'entry' ? { type: 'entry', created_at: u.last_attendance, scheduled_entry: u.scheduled_entry, scheduled_exit: u.scheduled_exit } : null, reference);
+      return {
+        ...publicUser(u), lastType: u.last_type, lastAttendance: u.last_attendance, attendanceCount: u.attendance_count || 0,
+        openShift: !!shift && !shift.closed, shiftClosed: !!shift?.closed,
+        shiftDeadline: shift?.rule?.deadline || null,
+      };
+    }));
   } catch (error) { next(error); }
 });
 app.post('/api/users', auth, adminOnly, async (req, res, next) => {
@@ -174,8 +188,24 @@ app.get('/api/attendance/status', auth, async (req, res, next) => {
     const range = dayRange(todayLima());
     const countResult = await supabase.from('attendance').select('id', { count: 'exact', head: true }).eq('user_id', req.user.id).gte('created_at', range.start).lt('created_at', range.end);
     if (countResult.error) throw countResult.error;
-    const schedule = scheduleForAttendance(req.user, last, last?.type === 'entry' ? 'exit' : 'entry', now());
-    res.json({ last: last || null, nextType: last?.type === 'entry' ? 'exit' : 'entry', todayCount: countResult.count || 0, scheduledEntry: schedule.entry, scheduledExit: schedule.exit });
+    const reference = now();
+    // Si la salida venció sin marcarse, la jornada se cierra como "sin marcar" y la persona
+    // puede registrar una nueva entrada (nuevo día) sin quedar bloqueada.
+    const shift = shiftWindow(req.user, last, reference);
+    const nextType = shift && !shift.closed ? 'exit' : 'entry';
+    const schedule = nextType === 'exit' ? shift.schedule : scheduleForDate(req.user, todayLima());
+    res.json({
+      last: last || null, nextType, todayCount: countResult.count || 0,
+      scheduledEntry: schedule.entry, scheduledExit: schedule.exit,
+      exitPending: nextType === 'exit' && shift.rule.status === 'pending',
+      exitDeadline: nextType === 'exit' ? shift.rule.deadline : null,
+      exitDeadlineAt: nextType === 'exit' ? shift.rule.limitAt : null,
+      priorExit: shift?.closed ? {
+        day: shift.day, deadline: shift.rule.deadline, lateMark: !!shift.rule.lateMark, status: 'missing',
+        message: shift.rule.lateMark ? LIMIT_MESSAGES.entry : LIMIT_MESSAGES.exit,
+      } : null,
+      serverTime: reference,
+    });
   } catch (error) { next(error); }
 });
 app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next) => {
@@ -187,7 +217,13 @@ app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next)
     if (!['entry', 'exit'].includes(type) || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ message: 'Necesitamos una ubicación GPS válida.' });
     const supabase = getSupabase();
     const last = unwrap(await supabase.from('attendance').select('type,created_at,scheduled_entry,scheduled_exit').eq('user_id', req.user.id).order('id', { ascending: false }).limit(1).maybeSingle());
-    if (last?.type === type) return res.status(409).json({ message: `Tu última marcación ya fue una ${type === 'entry' ? 'entrada' : 'salida'}. Actualiza e inténtalo de nuevo.` });
+    // Regla del plazo: la salida vence 5 minutos después del horario de salida. Vencido el plazo
+    // la jornada queda "sin marcar" y no se acepta la salida (ni sube la foto al almacenamiento).
+    const reference = now();
+    const shift = shiftWindow(req.user, last, reference);
+    if (type === 'exit' && !shift) return res.status(409).json({ message: 'Primero registra tu entrada para poder marcar la salida.' });
+    if (shift?.closed && type === 'exit') return res.status(409).json({ message: shift.rule.lateMark ? LIMIT_MESSAGES.entry : LIMIT_MESSAGES.exit, code: 'MARK_WINDOW_CLOSED', exitDeadline: shift.rule.deadline });
+    if (last?.type === type && !(type === 'entry' && shift?.closed)) return res.status(409).json({ message: `Tu última marcación ya fue una ${type === 'entry' ? 'entrada' : 'salida'}. Actualiza e inténtalo de nuevo.` });
     const extension = req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg';
     photoPath = `${req.user.id}/${Date.now()}-${crypto.randomUUID()}${extension}`;
     unwrap(await supabase.storage.from(PHOTO_BUCKET).upload(photoPath, req.file.buffer, { contentType: req.file.mimetype, upsert: false }));
@@ -206,12 +242,14 @@ app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next)
   }
 });
 
-async function selectAttendance({ from = null, to = null, userId = null, type = null, ascending = false, limit = 500, paginate = false }) {
+async function selectAttendance({ from = null, to = null, start = null, end = null, userId = null, type = null, ascending = false, limit = 500, paginate = false }) {
   const supabase = getSupabase();
+  // dayRange()/dateRange() entregan start/end; ambos nombres son válidos.
+  const fromValue = from || start, toValue = to || end;
   const build = () => {
     let query = supabase.from('attendance').select('*').order('id', { ascending });
-    if (from) query = query.gte('created_at', from);
-    if (to) query = query.lt('created_at', to);
+    if (fromValue) query = query.gte('created_at', fromValue);
+    if (toValue) query = query.lt('created_at', toValue);
     if (userId) query = query.eq('user_id', userId);
     if (type) query = query.eq('type', type);
     return query;
@@ -264,13 +302,32 @@ app.get('/api/dashboard', auth, async (req, res, next) => {
     const todayRecords = await selectAttendance({ ...range, userId: isAdmin ? null : req.user.id, limit: 10000, paginate: true });
     const latestByUser = new Map();
     for (const record of todayRecords) if (!latestByUser.has(record.user_id)) latestByUser.set(record.user_id, record);
+    // Salidas del día que vencieron su plazo de 5 minutos sin marcación.
+    const today = todayLima(), reference = new Date();
+    const missingExits = [];
     let team = 1, present = 0;
     if (isAdmin) {
-      const employees = unwrap(await getSupabase().from('users').select('id').eq('active', true).eq('role', 'employee'));
-      const employeeIds = new Set(employees.map(employee => employee.id));
-      team = employees.length;
-      present = [...latestByUser.values()].filter(record => record.type === 'entry' && employeeIds.has(record.user_id)).length;
-    } else present = latestByUser.get(req.user.id)?.type === 'entry' ? 1 : 0;
+      const members = unwrap(await getSupabase().from('users').select('id,name,position,avatar_color,active,weekly_schedule,scheduled_entry,scheduled_exit').eq('active', true).eq('role', 'employee'));
+      const employeeIds = new Set(members.map(member => member.id));
+      team = members.length;
+      for (const member of members) {
+        const entryRecord = todayRecords.find(record => record.user_id === member.id && record.type === 'entry');
+        if (!entryRecord) continue;
+        const hasExit = todayRecords.some(record => record.user_id === member.id && record.type === 'exit');
+        const rule = exitStatus({ day: today, entryAt: entryRecord.created_at, exitAt: null, schedule: scheduleForDate(member, reference), now: reference });
+        // "Presente" = jornada abierta y todavía dentro del plazo para marcar salida.
+        if (hasExit) continue;
+        if (rule.status === 'pending' && employeeIds.has(member.id)) present += 1;
+        if (rule.status !== 'missing') continue;
+        missingExits.push({
+          userId: member.id, name: member.name, position: member.position, avatarColor: member.avatar_color,
+          scheduledExit: rule.scheduleExit, exitDeadline: rule.deadline, entryAt: entryRecord.created_at, lateMark: rule.lateMark,
+        });
+      }
+    } else {
+      const own = shiftWindow(req.user, latestByUser.get(req.user.id), reference);
+      present = own && !own.closed ? 1 : 0;
+    }
     const recentRaw = await selectAttendance({ userId: isAdmin ? null : req.user.id, limit: 8 });
     res.json({
       stats: {
@@ -278,7 +335,7 @@ app.get('/api/dashboard', auth, async (req, res, next) => {
         exits: todayRecords.filter(r => r.type === 'exit').length,
         late_minutes: todayRecords.filter(r => r.type === 'entry').reduce((sum, r) => sum + (r.late_minutes || 0), 0),
         overtime_minutes: todayRecords.filter(r => r.type === 'exit').reduce((sum, r) => sum + (r.overtime_minutes || 0), 0),
-        people: new Set(todayRecords.map(r => r.user_id)).size, present, team,
+        people: new Set(todayRecords.map(r => r.user_id)).size, present, team, missingExits,
       }, recent: await withRelations(recentRaw),
     });
   } catch (error) { next(error); }
@@ -309,20 +366,54 @@ async function buildReport(query) {
     if (row.type === 'entry' && !group.firstEntry) group.firstEntry = row;
     if (row.type === 'exit') group.lastExit = row;
   }
-  const days = [...grouped.values()].map(group => ({
-    userId: group.userId, name: group.name, username: group.username, position: group.position, avatarColor: group.avatarColor,
-    day: group.day, scheduledEntry: group.scheduledEntry, scheduledExit: group.scheduledExit,
-    firstEntry: group.firstEntry?.created_at || null, lastExit: group.lastExit?.created_at || null,
-    lateMinutes: group.firstEntry?.late_minutes || 0, overtimeMinutes: group.lastExit?.overtime_minutes || 0,
-    earlyLeaveMinutes: group.lastExit?.early_leave_minutes || 0,
-    workedMinutes: group.firstEntry && group.lastExit ? Math.max(0, Math.floor((new Date(group.lastExit.created_at) - new Date(group.firstEntry.created_at)) / 60000)) : 0,
-    records: group.records, status: group.firstEntry && group.lastExit ? 'complete' : group.firstEntry ? 'missing_exit' : 'missing_entry',
-  })).sort((a, b) => b.day.localeCompare(a.day) || a.name.localeCompare(b.name));
+  // Reglas del plazo: si pasan 5 minutos del horario de salida sin marcación, la jornada
+  // queda "sin marcar". Además, todo colaborador activo con horario que no marcó nada
+  // aparece también como "sin marcar" en el rango de fechas consultado.
+  const reference = now();
+  const today = todayLima();
+  // Las ausencias se generan para colaboradores (el SuperAdmin administra y no cumple turnos).
+  const members = unwrap(await getSupabase().from('users').select('id,name,username,position,avatar_color,active,created_at,weekly_schedule,scheduled_entry,scheduled_exit').eq('active', true).eq('role', 'employee'));
+  const absentMembers = members.filter(member => !userId || member.id === userId);
+  const lastDay = to > today ? today : to;
+  for (const member of lastDay >= from ? absentMembers : []) {
+    // No se generan ausencias anteriores al alta del colaborador.
+    const startDay = limaDate(member.created_at) > from ? limaDate(member.created_at) : from;
+    for (let day = startDay; day <= lastDay; day = addDays(day, 1)) {
+      const schedule = scheduleForDate(member, `${day}T12:00:00Z`);
+      // Los días con salida igual a la entrada se consideran días de descanso.
+      if (!schedule || shortTime(schedule.entry) === shortTime(schedule.exit)) continue;
+      if (grouped.has(`${member.id}:${day}`)) continue;
+      const rule = exitStatus({ day, entryAt: null, schedule, now: reference });
+      if (rule.status !== 'missing') continue;
+      grouped.set(`${member.id}:${day}`, {
+        userId: member.id, name: member.name, username: member.username, position: member.position,
+        avatarColor: member.avatar_color, day, firstEntry: null, lastExit: null,
+        scheduledEntry: shortTime(schedule.entry), scheduledExit: shortTime(schedule.exit), records: 0, absent: true,
+      });
+    }
+  }
+  const days = [...grouped.values()].map(group => {
+    const schedule = { entry: group.scheduledEntry, exit: group.scheduledExit };
+    const rule = exitStatus({ day: group.day, entryAt: group.firstEntry?.created_at, exitAt: group.lastExit?.created_at, schedule, now: reference });
+    // 'absent' = no marcó nada ese día; también se muestra como "sin marcar".
+    const status = group.firstEntry && group.lastExit ? 'complete' : group.firstEntry ? (rule.status === 'missing' ? 'missing_exit' : 'pending_exit') : group.absent ? 'absent' : 'missing_entry';
+    return {
+      userId: group.userId, name: group.name, username: group.username, position: group.position, avatarColor: group.avatarColor,
+      day: group.day, scheduledEntry: group.scheduledEntry, scheduledExit: group.scheduledExit,
+      firstEntry: group.firstEntry?.created_at || null, lastExit: group.lastExit?.created_at || null,
+      lateMinutes: group.firstEntry?.late_minutes || 0, overtimeMinutes: group.lastExit?.overtime_minutes || 0,
+      earlyLeaveMinutes: group.lastExit?.early_leave_minutes || 0,
+      workedMinutes: group.firstEntry && group.lastExit ? Math.max(0, Math.floor((new Date(group.lastExit.created_at) - new Date(group.firstEntry.created_at)) / 60000)) : 0,
+      exitDeadline: rule.deadline || exitDeadline(schedule).deadline, exitLateMark: !!rule.lateMark, absent: !!group.absent,
+      records: group.records, status,
+    };
+  }).sort((a, b) => b.day.localeCompare(a.day) || a.name.localeCompare(b.name));
   const employeeMap = new Map();
   for (const day of days) {
-    if (!employeeMap.has(day.userId)) employeeMap.set(day.userId, { id: day.userId, name: day.name, username: day.username, position: day.position, avatarColor: day.avatarColor, days: 0, lateDays: 0, lateMinutes: 0, overtimeMinutes: 0, earlyLeaveMinutes: 0, workedMinutes: 0 });
+    if (!employeeMap.has(day.userId)) employeeMap.set(day.userId, { id: day.userId, name: day.name, username: day.username, position: day.position, avatarColor: day.avatarColor, days: 0, workedDays: 0, missingDays: 0, lateDays: 0, lateMinutes: 0, overtimeMinutes: 0, earlyLeaveMinutes: 0, workedMinutes: 0 });
     const employee = employeeMap.get(day.userId);
-    employee.days += 1; employee.lateDays += day.lateMinutes > 0 ? 1 : 0; employee.lateMinutes += day.lateMinutes;
+    employee.days += 1; employee.workedDays += day.status === 'complete' ? 1 : 0; employee.missingDays += day.status === 'missing_exit' || day.status === 'absent' ? 1 : 0;
+    employee.lateDays += day.lateMinutes > 0 ? 1 : 0; employee.lateMinutes += day.lateMinutes;
     employee.overtimeMinutes += day.overtimeMinutes; employee.earlyLeaveMinutes += day.earlyLeaveMinutes; employee.workedMinutes += day.workedMinutes;
   }
   const employees = [...employeeMap.values()].sort((a, b) => b.workedMinutes - a.workedMinutes || a.name.localeCompare(b.name));
@@ -331,6 +422,8 @@ async function buildReport(query) {
     lateDays: days.filter(day => day.lateMinutes > 0).length, onTimeDays: days.filter(day => day.firstEntry && day.lateMinutes === 0).length,
     lateMinutes: days.reduce((sum, day) => sum + day.lateMinutes, 0), overtimeMinutes: days.reduce((sum, day) => sum + day.overtimeMinutes, 0),
     earlyLeaveMinutes: days.reduce((sum, day) => sum + day.earlyLeaveMinutes, 0), workedMinutes: days.reduce((sum, day) => sum + day.workedMinutes, 0),
+    missingExitDays: days.filter(day => day.status === 'missing_exit').length, pendingExitDays: days.filter(day => day.status === 'pending_exit').length,
+    unmarkedDays: days.filter(day => day.status === 'missing_exit' || day.status === 'absent').length,
   } };
 }
 app.get('/api/reports', auth, adminOnly, async (req, res, next) => { try { res.json(await buildReport(req.query)); } catch (error) { next(error); } });
@@ -338,10 +431,13 @@ app.get('/api/reports/export', auth, adminOnly, async (req, res, next) => {
   try {
     const report = await buildReport(req.query);
     const esc = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
-    const localDateTime = value => value ? new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : 'Pendiente';
+    const STATUS_LABELS = { complete: 'Completo', missing_exit: 'Sin marcar', absent: 'Sin marcar', pending_exit: 'Dentro del plazo', missing_entry: 'Sin entrada' };
+    const localDateTime = (value, day, status) => value
+      ? new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+      : status === 'pending_exit' ? 'Dentro del plazo' : 'Sin marcar';
     const lines = [
-      ['Fecha', 'Nombre', 'Usuario', 'Puesto', 'Horario entrada', 'Horario salida', 'Primera entrada', 'Última salida', 'Tardanza (min)', 'Tiempo extra (min)', 'Salida anticipada (min)', 'Tiempo trabajado (min)', 'Estado'].map(esc).join(','),
-      ...report.days.map(day => [day.day, day.name, day.username, day.position, day.scheduledEntry, day.scheduledExit, localDateTime(day.firstEntry), localDateTime(day.lastExit), day.lateMinutes, day.overtimeMinutes, day.earlyLeaveMinutes, day.workedMinutes, day.status === 'complete' ? 'Completo' : day.status === 'missing_exit' ? 'Sin salida' : 'Sin entrada'].map(esc).join(',')),
+      ['Fecha', 'Nombre', 'Usuario', 'Puesto', 'Horario entrada', 'Horario salida', 'Plazo máximo de salida', 'Primera entrada', 'Última salida', 'Tardanza (min)', 'Tiempo extra (min)', 'Salida anticipada (min)', 'Tiempo trabajado (min)', 'Estado'].map(esc).join(','),
+      ...report.days.map(day => [day.day, day.name, day.username, day.position, day.scheduledEntry, day.scheduledExit, day.exitDeadline, localDateTime(day.firstEntry, day.day, day.status), localDateTime(day.lastExit, day.day, day.status), day.lateMinutes, day.overtimeMinutes, day.earlyLeaveMinutes, day.workedMinutes, STATUS_LABELS[day.status] || 'Sin marcar'].map(esc).join(',')),
     ];
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="reporte-punto-${report.from}-${report.to}.csv"`);

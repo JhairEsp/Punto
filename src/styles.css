@@ -466,6 +466,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .attendance-type-switch > button { min-height: 65px; padding: 10px 13px; border: 1px solid #e0e5dd; border-radius: 15px; background: white; display: flex; align-items: center; gap: 9px; text-align: left; color: #8b958d; transition: border .2s, background .2s, transform .2s; }
 .attendance-type-switch > button.active.entry { border-color: #aac790; background: #f0f6e9; color: #557f41; }
 .attendance-type-switch > button.active.exit { border-color: #e0c299; background: #fcf6ed; color: #a4743e; }
+.attendance-type-switch > button:disabled { opacity: .45; cursor: not-allowed; }
 .attendance-type-switch > button > span { flex: 1; }
 .attendance-type-switch strong, .attendance-type-switch small { display: block; }
 .attendance-type-switch strong { color: var(--ink); font-size: 11px; }
@@ -660,7 +661,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .worked-cell { font-size: 8px; white-space: nowrap; }
 .day-status { display: inline-flex; align-items: center; gap: 4px; padding: 5px 7px; border-radius: 7px; font-size: 7px; font-weight: 700; white-space: nowrap; }
 .day-status.complete { color: #5e814a; background: #edf4e7; }
-.day-status.missing_exit, .day-status.missing_entry { color: #a87645; background: #fcf2e7; }
+.day-status.pending_exit { color: #6b7f8f; background: #eef2f6; }
+.day-status.missing_exit, .day-status.absent { color: #a8453b; background: #fbecea; }
+.day-status.missing_entry { color: #a87645; background: #fcf2e7; }
+.schedule-cell.deadline-missed { color: #b4564f; font-weight: 700; }
+.table-time.entry.unmarked { color: #b4564f; font-weight: 700; }
+.table-time.exit.unmarked { color: #b4564f; font-weight: 700; }
+.report-stats-five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+/* Plazo de salida (5 minutos) */
+.exit-deadline-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 11px; background: #f3f6ef; color: #6d7f63; font-size: 8px; line-height: 1.5; }
+.exit-deadline-note strong { color: #4d6740; }
+.exit-window-note { display: flex; align-items: flex-start; gap: 9px; margin-top: 10px; padding: 11px 12px; border-radius: 12px; background: #fdf3ee; border: 1px solid #f2ded2; color: #a4743e; animation: fadeUp .25s ease; }
+.exit-window-note > div strong, .exit-window-note > div span { display: block; }
+.exit-window-note > div strong { font-size: 9px; color: #8f5f30; }
+.exit-window-note > div span { font-size: 8px; line-height: 1.5; margin-top: 3px; color: #a3815d; }
+.missing-exit-card { margin-bottom: 13px; }
+.missing-exit-card .report-count-pill.alert { background: #fbecea; color: #a8453b; }
+.missing-exit-list { display: flex; flex-direction: column; gap: 9px; margin-top: 13px; }
+.missing-exit-row { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 12px; background: #fbf7f3; border: 1px solid #f0e5d9; }
+.missing-exit-row strong, .missing-exit-row span { display: block; }
+.missing-exit-row strong { font-size: 9px; }
+.missing-exit-row span { font-size: 7px; color: #a3815d; margin-top: 3px; }
+.missing-exit-empty { margin-top: 11px; font-size: 8px; color: #8b958d; line-height: 1.5; }
 .report-method-note { display: flex; align-items: center; justify-content: center; gap: 7px; color: #95a094; font-size: 8px; margin: 17px 0; }
 
 /* Feedback */
@@ -692,6 +715,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .type-filter { margin-left: 0; }
   .records-summary { gap: 20px; }
   .verified-summary { display: none !important; }
+  .report-stats-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 800px) {
   .login-page { display: block; background: var(--forest); }
@@ -748,7 +772,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .hero-pin { width: 105px; height: 105px; right: -9px; top: 30px; opacity: .35; }
   .pin-center { width: 48px; height: 48px; border-radius: 17px; }
   .pin-center > svg:last-child { left: 22px; top: 21px; }
-  .stats-grid, .stats-grid.stats-two { grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
+  .stats-grid, .stats-grid.stats-two, .report-stats-five { grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
   .stat-card { padding: 15px; min-height: 129px; border-radius: 17px; }
   .stat-icon { width: 30px; height: 30px; right: 13px; top: 13px; }
   .stat-icon svg { width: 17px; }
