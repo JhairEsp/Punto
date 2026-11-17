@@ -75,7 +75,8 @@ test('exporta XLSX real con tres hojas, filtros, paneles y duraciones numéricas
   assert.equal(detail.views[0].ySplit, 6);
   assert.equal(detail.getCell('P7').value.toISOString(), '1899-12-30T09:00:00.000Z');
   assert.equal(detail.getCell('P7').numFmt, '[h]:mm');
-  assert.equal(detail.getCell('Q7').value, 'Completo');
+  assert.equal(detail.getCell('Q7').value, '17:05');
+  assert.equal(detail.getCell('R7').value, 'Completo');
   assert.equal(detail.getCell('G7').value, '08:00');
   assert.equal(detail.getCell('B7').value, 'María Pérez');
   assert.equal(book.getWorksheet('Equipo').getCell('G8').value.toISOString(), '1899-12-30T09:00:00.000Z');
@@ -88,4 +89,22 @@ test('nombres peligrosos son texto, no fórmulas de Excel; archivo vacío tambi�
   assert.equal(decoded.getWorksheet('Detalle diario').getCell('B7').type, ExcelJS.ValueType.String);
   const empty = await createReportWorkbook(generate([], { users: [] }));
   assert.ok((await empty.xlsx.writeBuffer()).length > 0);
+});
+
+test('reporte integra plazos de entrada y salida sin perder el almuerzo', () => {
+  const rows = [mark('entry', '08:00'), mark('lunch_start', '12:40'), mark('lunch_end', '13:00')];
+  const pending = generate(rows, { now: '2026-11-17T17:05:00-05:00' });
+  assert.equal(pending.days[0].status, 'pending_exit');
+  assert.equal(pending.days[0].exitDeadline, '17:05');
+  assert.equal(pending.summary.missingDays, 0);
+  assert.equal(pending.summary.pendingExitDays, 1);
+  const expired = generate(rows, { now: '2026-11-17T17:05:01-05:00' });
+  assert.equal(expired.days[0].status, 'missing_exit');
+  assert.equal(expired.summary.missingDays, 1);
+  assert.equal(expired.summary.missingExitDays, 1);
+  assert.equal(expired.employees[0].missingDays, 1);
+  assert.equal(expired.days[0].lunchStatus, 'complete');
+});
+test('reporte no genera ausencias en descansos entrada igual a salida', () => {
+  assert.equal(generate([], { users: [{ ...user, scheduled_exit: '08:00' }] }).days.length, 0);
 });

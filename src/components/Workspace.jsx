@@ -30,7 +30,7 @@ export default function Workspace({ user, onLogout, notify }) {
     finally { setLoading(false); }
   }, [admin, notify]);
   useEffect(() => { refresh(); }, [refresh, refreshKey]);
-  useEffect(() => { const timer = setInterval(() => { api('/dashboard').then(setDashboard).catch(() => {}); }, 30000); return () => clearInterval(timer); }, []);
+  useEffect(() => { const timer = setInterval(() => { api('/dashboard').then(setDashboard).catch(() => {}); if (admin) api('/users').then(setUsers).catch(() => {}); }, 30000); return () => clearInterval(timer); }, [admin]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [tab]);
 
   const navItems = [

@@ -31,8 +31,8 @@ function rows(ws, values, statusColumn = null) {
     });
     if (statusColumn) {
       const cell = row.getCell(statusColumn);
-      cell.font = { name: 'Aptos', bold: true, size: 10, color: { argb: cell.value === 'Sin marcar' ? C.red : C.teal } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cell.value === 'Sin marcar' ? C.pink : cell.value === 'Completo' ? C.green : C.amber } };
+      cell.font = { name: 'Aptos', bold: true, size: 10, color: { argb: String(cell.value).startsWith('Sin marcar') ? C.red : C.teal } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: String(cell.value).startsWith('Sin marcar') ? C.pink : cell.value === 'Completo' ? C.green : C.amber } };
     }
   }
   ws.autoFilter = { from: { row: 6, column: 1 }, to: { row: Math.max(6, ws.rowCount), column: ws.columnCount } };
@@ -47,7 +47,7 @@ export async function createReportWorkbook(report, now = new Date()) {
     ['Colaboradores', s.employees, 'Personas incluidas en el periodo seleccionado'],
     ['Jornadas evaluadas', s.days, 'Incluye jornadas sin marcar; no incluye días futuros'],
     ['Marcaciones verificadas', s.records, 'Registros reales con foto y GPS'],
-    ['Sin marcar', s.missingDays, 'Sin entrada después de una hora del ingreso programado'],
+    ['Sin marcar', s.missingDays, 'Sin entrada después de 1 h, o sin salida después de 5 min de tolerancia'],
     ['Entradas puntuales', s.onTimeDays, 'Sin minutos de tardanza'],
     ['Llegadas tarde', s.lateDays, 'Entradas registradas dentro del plazo con tardanza'],
     ['Tiempo trabajado', duration(s.workedMinutes), 'Primera entrada a última salida, menos almuerzo registrado'],
@@ -56,6 +56,8 @@ export async function createReportWorkbook(report, now = new Date()) {
     ['Salidas anticipadas', duration(s.earlyLeaveMinutes), 'Duración en horas y minutos'],
     ['Retorno de almuerzo tardío', duration(s.lunchLateMinutes), 'Minutos después de las 13:00'],
     ['Almuerzos sin finalizar', s.missingLunchEnds, 'Requieren revisión: no se genera una marcación automática'],
+    ['Salidas sin marcar', s.missingExitDays, 'La salida se bloquea al vencer los 5 minutos de tolerancia'],
+    ['Salidas dentro del plazo', s.pendingExitDays, 'Jornadas abiertas que todavía pueden registrar salida'],
   ]);
   for (const r of [13, 14, 15, 16, 17]) summary.getCell(`B${r}`).numFmt = DURATION;
   summary.mergeCells('A21:C21'); summary.getCell('A21').value = 'Sin finalizar el almuerzo, el tiempo hasta la salida se considera descanso provisional. Revisar incidencias.'; summary.getCell('A21').alignment = { wrapText: true }; summary.getRow(21).height = 34;
@@ -68,7 +70,7 @@ export async function createReportWorkbook(report, now = new Date()) {
     })]);
     r.eachCell(cell => { cell.font = { bold: true, color: { argb: C.white } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.teal } }; });
   }
-  const detail = sheet(book, 'Detalle diario', 'Cada jornada, con claridad.', subtitle, [['Fecha', 16, 'dd/mm/yyyy'], ['Colaborador', 30], ['Usuario', 20], ['Puesto', 25], ['Ingreso previsto', 18], ['Salida prevista', 18], ['Entrada', 15], ['Salida', 15], ['Inicio almuerzo', 18], ['Fin almuerzo', 18], ['Estado almuerzo', 22], ['Retorno tarde', 18, DURATION], ['Tardanza', 16, DURATION], ['Extra', 16, DURATION], ['Salida anticipada', 20, DURATION], ['Trabajado', 17, DURATION], ['Estado jornada', 19]]);
-  rows(detail, report.days.map(d => [new Date(`${d.day}T00:00:00Z`), d.name, d.username, d.position, d.scheduledEntry, d.scheduledExit, time(d.firstEntry), time(d.lastExit), time(d.lunchStart), time(d.lunchEnd), LUNCH_LABELS[d.lunchStatus], duration(d.lunchLateMinutes), duration(d.lateMinutes), duration(d.overtimeMinutes), duration(d.earlyLeaveMinutes), duration(d.workedMinutes), STATUS_LABELS[d.status]]), 17);
+  const detail = sheet(book, 'Detalle diario', 'Cada jornada, con claridad.', subtitle, [['Fecha', 16, 'dd/mm/yyyy'], ['Colaborador', 30], ['Usuario', 20], ['Puesto', 25], ['Ingreso previsto', 18], ['Salida prevista', 18], ['Entrada', 15], ['Salida', 15], ['Inicio almuerzo', 18], ['Fin almuerzo', 18], ['Estado almuerzo', 22], ['Retorno tarde', 18, DURATION], ['Tardanza', 16, DURATION], ['Extra', 16, DURATION], ['Salida anticipada', 20, DURATION], ['Trabajado', 17, DURATION], ['Plazo salida', 18], ['Estado jornada', 23]]);
+  rows(detail, report.days.map(d => [new Date(`${d.day}T00:00:00Z`), d.name, d.username, d.position, d.scheduledEntry, d.scheduledExit, time(d.firstEntry), d.lastExit ? time(d.lastExit) : d.status === 'missing_exit' ? 'Sin marcar' : d.status === 'pending_exit' ? 'Dentro del plazo' : '—', time(d.lunchStart), time(d.lunchEnd), LUNCH_LABELS[d.lunchStatus], duration(d.lunchLateMinutes), duration(d.lateMinutes), duration(d.overtimeMinutes), duration(d.earlyLeaveMinutes), duration(d.workedMinutes), d.exitDeadline, STATUS_LABELS[d.status]]), 18);
   return book;
 }

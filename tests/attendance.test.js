@@ -64,3 +64,41 @@ test('fechas son reales y el cambio de día se hace en Lima', () => {
   assert.equal(validDate('2024-02-29'), true);
   assert.equal(limaDay('2026-11-18T02:00:00Z'), '2026-11-17');
 });
+
+test('el almuerzo no reinicia ni anula el plazo de cinco minutos para la salida', () => {
+  const marks = [mark('entry', '08:00'), mark('lunch_start', '12:00'), mark('lunch_end', '13:00')];
+  const before = state(marks, '17:05:00');
+  assert.equal(before.openShift, true);
+  assert.equal(before.exitDeadline, '17:05');
+  assert.ok(before.allowedTypes.includes('exit'));
+  const after = state(marks, '17:05:01');
+  assert.equal(after.missingExit, true);
+  assert.equal(after.openShift, false);
+  assert.deepEqual(after.allowedTypes, []);
+  assert.match(after.reasons.exit, /5 minutos/);
+});
+test('salida nocturna vencida no bloquea la entrada de la siguiente jornada', () => {
+  const nightUser = { scheduled_entry: '22:00', scheduled_exit: '06:00' };
+  const entry = mark('entry', '22:00', { scheduled_entry: '22:00', scheduled_exit: '06:00' });
+  const before = attendanceState(nightUser, [entry], '2026-11-18T06:05:00-05:00');
+  assert.equal(before.openShift, true);
+  assert.ok(before.allowedTypes.includes('exit'));
+  const expired = attendanceState(nightUser, [entry], '2026-11-18T06:05:01-05:00');
+  assert.equal(expired.openShift, false);
+  assert.ok(!expired.allowedTypes.includes('exit'));
+  assert.equal(expired.priorExit.day, '2026-11-17');
+  assert.equal(attendanceState(nightUser, [entry], '2026-11-18T22:00:00-05:00').allowedTypes.includes('entry'), true);
+});
+test('horario histórico se conserva y la entrada tardía histórica tiene sus cinco minutos', () => {
+  const legacy = mark('entry', '19:00');
+  const pending = state([legacy], '19:05:00');
+  assert.ok(pending.allowedTypes.includes('exit'));
+  assert.equal(pending.exitDeadline, '19:05');
+  assert.equal(state([legacy], '19:05:01').missingExit, true);
+});
+test('descansos entrada igual a salida no generan sin marcar ni permiten entrada', () => {
+  const rest = attendanceState({ scheduled_entry: '08:00', scheduled_exit: '08:00' }, [], '2026-11-17T18:00:00-05:00');
+  assert.equal(rest.restDay, true);
+  assert.equal(rest.missingEntry, false);
+  assert.deepEqual(rest.allowedTypes, []);
+});

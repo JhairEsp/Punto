@@ -111,7 +111,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
   const label = markLabel(completedType);
   const options = [
     { id: 'entry', icon: ArrowDownLeft, note: 'Una vez por jornada' },
-    { id: 'exit', icon: ArrowUpRight, note: 'Finalizo mi jornada' },
+    { id: 'exit', icon: ArrowUpRight, note: status?.exitDeadline ? `Hasta las ${status.exitDeadline} · 5 min de tolerancia` : 'Finalizo mi jornada' },
     { id: 'lunch_start', icon: Utensils, note: 'Disponible de 12:00 a 13:00' },
     { id: 'lunch_end', icon: CheckCircle2, note: 'Debes marcar a las 13:00' },
   ];
@@ -123,6 +123,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
         <div className="attendance-type-switch">{options.map(({ id, icon: Icon, note }) => <button key={id} type="button" className={type === id ? `active ${id.startsWith('lunch') ? 'lunch' : id}` : ''} disabled={!status?.allowedTypes.includes(id) || submitting} title={status?.reasons[id] || note} onClick={() => setType(id)}><Icon size={19} /><span><strong>{markLabel(id)}</strong><small>{status?.reasons[id] || note}</small></span>{type === id && <Check size={16} />}</button>)}</div>
         {status?.last && <div className="last-mark-note"><ClockIcon /><span>Última marcación: <strong>{markLabel(status.last.type)}</strong> · {formatTime(status.last.created_at)}</span></div>}
         {status && <div className="attendance-schedule-note"><Clock3 size={14} /><span>Tu horario: <strong>{status.scheduledEntry} — {status.scheduledExit}</strong> · Entrada hasta <strong>{formatTime(status.entryDeadline)}</strong></span></div>}
+        {status && <div className={`exit-deadline-note ${status.priorExit ? 'expired' : ''}`}><Clock3 size={14} /><span>{status.priorExit ? <>Salida del {status.priorExit.day}: <strong>sin marcar</strong>. Venció el plazo de las {status.priorExit.deadline}.</> : <>Salida hasta las <strong>{status.exitDeadline}</strong> · 5 minutos de tolerancia después del horario de salida.</>}</span></div>}
         <div className={`lunch-notice ${status?.lunchStatus === 'overdue' || status?.missingEntry ? 'warning' : ''}`}><Utensils size={18} /><div><strong>{status?.missingEntry ? 'Entrada sin marcar' : status?.lunchStatus === 'overdue' ? 'Falta finalizar tu almuerzo' : 'Almuerzo fijo · 12:00 — 13:00'}</strong><p>{status?.missingEntry ? 'Pasó una hora desde tu ingreso programado. La entrada de esta jornada está cerrada.' : status?.lunchStatus === 'overdue' ? 'Debías marcar a las 13:00. Registra tu retorno ahora; se guardará la hora real.' : 'Si empiezas después de las 12:00, tu descanso igualmente termina a las 13:00. Debes marcar el fin.'}</p></div></div>
         {status && !status.allowedTypes.length && <p className="capture-error">No tienes marcaciones disponibles en esta jornada.</p>}
 

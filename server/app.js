@@ -109,7 +109,11 @@ app.get('/api/users', auth, adminOnly, async (req, res, next) => {
   try {
     const rows = unwrap(await getSupabase().from('user_attendance_summary').select('*').order('name'));
     rows.sort((a, b) => (a.role === 'superadmin' ? -1 : 0) - (b.role === 'superadmin' ? -1 : 0) || Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
-    res.json(rows.map(u => ({ ...publicUser(u), lastType: u.last_type, lastAttendance: u.last_attendance, attendanceCount: u.attendance_count || 0 })));
+    const records = await selectAttendance({ from: dayRange(addDays(todayLima(), -1)).from, ascending: true, limit: 100000, paginate: true });
+    res.json(rows.map(u => {
+      const state = attendanceState(u, records.filter(r => r.user_id === u.id));
+      return { ...publicUser(u), lastType: u.last_type, lastAttendance: u.last_attendance, attendanceCount: u.attendance_count || 0, openShift: state.openShift, shiftClosed: state.missingExit || !!state.priorExit, shiftDeadline: state.exitDeadline };
+    }));
   } catch (error) { next(error); }
 });
 app.post('/api/users', auth, adminOnly, async (req, res, next) => {
@@ -173,7 +177,7 @@ app.post('/api/attendance', auth, upload.single('photo'), async (req, res, next)
     if (!MARK_TYPES.includes(type) || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ message: 'Necesitamos una ubicación GPS válida.' });
     const supabase = getSupabase();
     const state = await currentAttendanceState(req.user);
-    if (!state.allowedTypes.includes(type)) return res.status(409).json({ message: state.reasons[type] });
+    if (!state.allowedTypes.includes(type)) return res.status(409).json({ message: state.reasons[type], ...(type === 'exit' && state.missingExit ? { code: 'MARK_WINDOW_CLOSED', exitDeadline: state.exitDeadline } : {}) });
     const extension = req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg';
     photoPath = `${req.user.id}/${Date.now()}-${crypto.randomUUID()}${extension}`;
     unwrap(await supabase.storage.from(PHOTO_BUCKET).upload(photoPath, req.file.buffer, { contentType: req.file.mimetype, upsert: false }));
@@ -251,25 +255,29 @@ app.get('/api/dashboard', auth, async (req, res, next) => {
     const isAdmin = req.user.role === 'superadmin';
     const range = dayRange(todayLima());
     const todayRecords = await selectAttendance({ ...range, userId: isAdmin ? null : req.user.id, limit: 10000, paginate: true });
-    const latestByUser = new Map();
-    for (const record of todayRecords) if (!latestByUser.has(record.user_id)) latestByUser.set(record.user_id, record);
-    let team = 1, present = 0, missing = 0;
+    const windowRecords = await selectAttendance({ from: dayRange(addDays(todayLima(), -1)).from, userId: isAdmin ? null : req.user.id, ascending: true, limit: 100000, paginate: true });
+    const attendanceStatus = attendanceState(req.user, windowRecords.filter(r => r.user_id === req.user.id));
+    let team = 1, present = attendanceStatus.openShift ? 1 : 0, missing = attendanceStatus.missingEntry ? 1 : 0;
+    const missingExits = [];
     if (isAdmin) {
       const employees = unwrap(await getSupabase().from('users').select('*').eq('active', true).eq('role', 'employee'));
-      const employeeIds = new Set(employees.map(employee => employee.id));
-      team = employees.length;
-      missing = employees.filter(employee => attendanceState(employee, todayRecords.filter(r => r.user_id === employee.id)).missingEntry).length;
-      present = [...latestByUser.values()].filter(record => record.type !== 'exit' && employeeIds.has(record.user_id)).length;
-    } else present = latestByUser.has(req.user.id) && latestByUser.get(req.user.id).type !== 'exit' ? 1 : 0;
+      team = employees.length; present = 0; missing = 0;
+      for (const employee of employees) {
+        const state = attendanceState(employee, windowRecords.filter(r => r.user_id === employee.id));
+        if (state.openShift) present++;
+        if (state.missingEntry) missing++;
+        if (state.priorExit) missingExits.push({ userId: employee.id, name: employee.name, position: employee.position, avatarColor: employee.avatar_color, day: state.priorExit.day, scheduledExit: state.scheduledExit, exitDeadline: state.priorExit.deadline, lateMark: state.priorExit.lateMark });
+      }
+    }
     const recentRaw = await selectAttendance({ userId: isAdmin ? null : req.user.id, limit: 8 });
     res.json({
-      attendanceStatus: await currentAttendanceState(req.user),
+      attendanceStatus,
       stats: {
         records: todayRecords.length, entries: todayRecords.filter(r => r.type === 'entry').length,
         exits: todayRecords.filter(r => r.type === 'exit').length,
         late_minutes: todayRecords.filter(r => r.type === 'entry').reduce((sum, r) => sum + (r.late_minutes || 0), 0),
         overtime_minutes: todayRecords.filter(r => r.type === 'exit').reduce((sum, r) => sum + (r.overtime_minutes || 0), 0),
-        people: new Set(todayRecords.map(r => r.user_id)).size, present, team, missing,
+        people: new Set(todayRecords.map(r => r.user_id)).size, present, team, missing, missingExits,
       }, recent: await withRelations(recentRaw),
     });
   } catch (error) { next(error); }

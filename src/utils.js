@@ -1,3 +1,7 @@
+import { EXIT_GRACE_MINUTES, exitDeadline } from '../shared/schedule.js';
+export { EXIT_GRACE_MINUTES, exitDeadline };
+export const maxExitTime = (schedule = {}) => exitDeadline({ entry: schedule.entry || '08:00', exit: schedule.exit || '17:00' }).deadline;
+
 export const LIMA_TZ = 'America/Lima';
 export const todayInput = () => new Intl.DateTimeFormat('en-CA', { timeZone: LIMA_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 export const formatTime = (date, seconds = false) => new Intl.DateTimeFormat('es-PE', { timeZone: LIMA_TZ, hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), hour12: true }).format(new Date(date));
@@ -30,5 +34,5 @@ export const greeting = () => {
 };
 
 export const markLabel = type => ({ entry: 'Entrada', exit: 'Salida', lunch_start: 'Inicio de almuerzo', lunch_end: 'Fin de almuerzo' }[type] || 'Marcación');
-export const dayStatusLabel = status => ({ complete: 'Completo', missing_exit: 'Sin salida', missing_entry: 'Sin marcar', pending: 'Pendiente' }[status] || 'Pendiente');
+export const dayStatusLabel = status => ({ complete: 'Completo', missing_exit: 'Sin marcar (salida)', pending_exit: 'Dentro del plazo', missing_entry: 'Sin marcar', pending: 'Pendiente' }[status] || 'Pendiente');
 export const lunchStatusLabel = status => ({ complete: 'Finalizado', late: 'Retorno tardío', missing_end: 'Sin finalizar', active: 'En almuerzo', not_started: 'Sin registro' }[status] || 'Sin registro');

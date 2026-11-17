@@ -1,7 +1,7 @@
-import { scheduleForDate } from './schedule.js';
+import { scheduleForDate, exitStatus, exitDeadline } from './schedule.js';
 import { addDays, atLima, limaDay, recordDay, validDate } from './attendance-rules.js';
 
-export const STATUS_LABELS = { complete: 'Completo', missing_exit: 'Sin salida', missing_entry: 'Sin marcar', pending: 'Pendiente' };
+export const STATUS_LABELS = { complete: 'Completo', missing_exit: 'Sin marcar (salida)', pending_exit: 'Dentro del plazo', missing_entry: 'Sin marcar', pending: 'Pendiente' };
 export const LUNCH_LABELS = { complete: 'Finalizado', late: 'Retorno tardío', missing_end: 'Sin finalizar', active: 'En almuerzo', not_started: 'Sin registro' };
 export function reportRange(query, now = new Date()) {
   const month = String(query.month || (!query.from && !query.to ? limaDay(now).slice(0, 7) : ''));
@@ -41,6 +41,8 @@ export function summarizeReport({ from, to, rows, users, now = new Date() }) {
   for (const user of users.filter(u => u.active && u.role === 'employee')) {
     for (let day = from; day <= to && day <= limaDay(now); day = addDays(day, 1)) {
       if (user.created_at && day < limaDay(user.created_at)) continue;
+      const schedule = scheduleForDate(user, `${day}T12:00:00Z`);
+      if (schedule.entry === schedule.exit) continue;
       ensure(user, day);
     }
   }
@@ -55,14 +57,17 @@ export function summarizeReport({ from, to, rows, users, now = new Date() }) {
     const breakEnd = lunchEnd || lastExit;
     const lunchMinutes = lunchStart && breakEnd ? Math.max(0, (Math.min(new Date(breakEnd.created_at), lastExit ? new Date(lastExit.created_at) : Infinity) - new Date(lunchStart.created_at)) / 60000) : 0;
     const deadline = new Date(atLima(group.day, group.scheduledEntry).getTime() + 3600000);
+    const schedule = { entry: group.scheduledEntry, exit: group.scheduledExit };
+    const rule = exitStatus({ day: group.day, entryAt: firstEntry?.created_at, exitAt: lastExit?.created_at, schedule, now });
     return { ...group,
+      exitDeadline: rule.deadline || exitDeadline(schedule).deadline, exitDeadlineAt: rule.limitAt, exitLateMark: !!rule.lateMark,
       firstEntry: firstEntry?.created_at || null, lastExit: lastExit?.created_at || null,
       lunchStart: lunchStart?.created_at || null, lunchEnd: lunchEnd?.created_at || null,
       lunchMinutes: Math.floor(lunchMinutes), lunchLateMinutes: lunchEnd ? Math.max(0, Math.floor((new Date(lunchEnd.created_at) - lunchDeadline) / 60000)) : 0,
       lunchStatus: lunchEnd ? (new Date(lunchEnd.created_at) > lunchDeadline ? 'late' : 'complete') : lunchStart ? (now > lunchDeadline ? 'missing_end' : 'active') : 'not_started',
       lateMinutes: firstEntry?.late_minutes || 0, overtimeMinutes: lastExit?.overtime_minutes || 0, earlyLeaveMinutes: lastExit?.early_leave_minutes || 0,
       workedMinutes: Math.max(0, Math.floor(gross - lunchMinutes)), records: marks.length,
-      status: firstEntry ? (lastExit ? 'complete' : 'missing_exit') : now > deadline ? 'missing_entry' : 'pending',
+      status: firstEntry ? (lastExit ? 'complete' : rule.status === 'missing' ? 'missing_exit' : 'pending_exit') : now > deadline ? 'missing_entry' : 'pending',
     };
   }).sort((a, b) => b.day.localeCompare(a.day) || a.name.localeCompare(b.name));
   const employees = new Map();
@@ -70,7 +75,7 @@ export function summarizeReport({ from, to, rows, users, now = new Date() }) {
     if (!employees.has(day.userId)) employees.set(day.userId, { id: day.userId, name: day.name, username: day.username, position: day.position, avatarColor: day.avatarColor, days: 0, missingDays: 0, lateDays: 0, lateMinutes: 0, overtimeMinutes: 0, earlyLeaveMinutes: 0, workedMinutes: 0, lunchLateMinutes: 0, missingLunchEnds: 0 });
     const employee = employees.get(day.userId);
     employee.days += day.firstEntry ? 1 : 0;
-    employee.missingDays += day.status === 'missing_entry' ? 1 : 0;
+    employee.missingDays += ['missing_entry', 'missing_exit'].includes(day.status) ? 1 : 0;
     employee.lateDays += day.lateMinutes > 0 ? 1 : 0;
     employee.missingLunchEnds += day.lunchStatus === 'missing_end' ? 1 : 0;
     for (const key of ['lateMinutes', 'overtimeMinutes', 'earlyLeaveMinutes', 'workedMinutes', 'lunchLateMinutes']) employee[key] += day[key];
@@ -78,7 +83,11 @@ export function summarizeReport({ from, to, rows, users, now = new Date() }) {
   const sum = key => days.reduce((total, day) => total + day[key], 0);
   return { from, to, days, employees: [...employees.values()].sort((a, b) => b.workedMinutes - a.workedMinutes || a.name.localeCompare(b.name)), summary: {
     employees: employees.size, days: days.length, records: sum('records'),
-    missingDays: days.filter(d => d.status === 'missing_entry').length,
+    missingDays: days.filter(d => ['missing_entry', 'missing_exit'].includes(d.status)).length,
+    unmarkedDays: days.filter(d => ['missing_entry', 'missing_exit'].includes(d.status)).length,
+    missingEntryDays: days.filter(d => d.status === 'missing_entry').length,
+    missingExitDays: days.filter(d => d.status === 'missing_exit').length,
+    pendingExitDays: days.filter(d => d.status === 'pending_exit').length,
     lateDays: days.filter(d => d.lateMinutes > 0).length, onTimeDays: days.filter(d => d.firstEntry && !d.lateMinutes).length,
     lateMinutes: sum('lateMinutes'), overtimeMinutes: sum('overtimeMinutes'), earlyLeaveMinutes: sum('earlyLeaveMinutes'), workedMinutes: sum('workedMinutes'),
     lunchLateMinutes: sum('lunchLateMinutes'), missingLunchEnds: days.filter(d => d.lunchStatus === 'missing_end').length,

@@ -6,7 +6,8 @@ import ExcelJS from 'exceljs';
 import { limaDay, addDays } from '../server/attendance-rules.js';
 
 // Local Supabase REST double: no network credentials and no production writes.
-test('API: permisos, filtros inclusivos en Lima, estado y descarga Excel', async () => {
+test('API: permisos, filtros inclusivos en Lima, estado y descarga Excel', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-17T12:30:00-05:00') });
   const today = limaDay(new Date());
   const yesterday = addDays(today, -1);
   const users = [
@@ -18,11 +19,12 @@ test('API: permisos, filtros inclusivos en Lima, estado y descarga Excel', async
     { id: 2, user_id: 2, type: 'entry', work_day: today, created_at: `${today}T13:00:00Z`, photo: 'test.jpg', scheduled_entry: '08:00', scheduled_exit: '17:00', latitude: 0, longitude: 0 },
   ];
   const queries = [];
+  let photoUploads = 0;
   const fake = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local'); queries.push(url);
     res.setHeader('Content-Type', 'application/json');
-    if (url.pathname.startsWith('/storage/')) { res.end(JSON.stringify([{ path: 'test.jpg', signedURL: '/object/sign/test.jpg?token=fake' }])); return; }
-    let data = url.pathname.endsWith('/users') ? [...users] : [...records];
+    if (url.pathname.startsWith('/storage/')) { if (req.method === 'POST' && !url.pathname.includes('/sign/')) photoUploads++; res.end(JSON.stringify([{ path: 'test.jpg', signedURL: '/object/sign/test.jpg?token=fake' }])); return; }
+    let data = url.pathname.endsWith('/users') || url.pathname.endsWith('/user_attendance_summary') ? users.map(u => ({ ...u, last_type: u.id === 2 ? 'lunch_start' : null, last_attendance: `${today}T12:20:00-05:00`, attendance_count: 2 })) : [...records];
     for (const [column, rule] of url.searchParams) {
       if (!['id', 'active', 'role', 'user_id', 'created_at', 'work_day', 'type'].includes(column)) continue;
       const [op, ...parts] = rule.split('.'), value = parts.join('.');
@@ -80,6 +82,42 @@ test('API: permisos, filtros inclusivos en Lima, estado y descarga Excel', async
     const duplicate = await request('/attendance', 2, { method: 'POST', body });
     assert.equal(duplicate.status, 409);
     assert.match((await duplicate.json()).message, /Ya registraste tu entrada/);
+    records.push({ ...records[1], id: 3, type: 'lunch_start', created_at: `${today}T12:20:00-05:00` });
+    const duringLunch = await (await request('/dashboard', 2)).json();
+    assert.equal(duringLunch.stats.present, 1);
+    t.mock.timers.setTime(new Date(`${today}T13:00:00-05:00`).getTime());
+    const lunchStatus = await (await request('/attendance/status', 2)).json();
+    assert.ok(lunchStatus.allowedTypes.includes('lunch_end'));
+    t.mock.timers.setTime(new Date(`${today}T17:05:00-05:00`).getTime());
+    const before = await (await request('/attendance/status', 2)).json();
+    assert.equal(before.exitDeadline, '17:05');
+    assert.ok(before.allowedTypes.includes('exit'));
+    const teamBefore = await (await request('/users')).json();
+    assert.equal(teamBefore.find(u => u.id === 2).openShift, true);
+    t.mock.timers.setTime(new Date(`${today}T17:05:01-05:00`).getTime());
+    const after = await (await request('/attendance/status', 2)).json();
+    assert.equal(after.missingExit, true);
+    assert.ok(!after.allowedTypes.includes('exit'));
+    body.set('type', 'exit');
+    const uploadsBefore = photoUploads;
+    const expired = await request('/attendance', 2, { method: 'POST', body });
+    assert.equal(expired.status, 409);
+    assert.equal((await expired.json()).code, 'MARK_WINDOW_CLOSED');
+    assert.equal(photoUploads, uploadsBefore);
+    const dashboard = await (await request('/dashboard')).json();
+    assert.equal(dashboard.stats.present, 0);
+    assert.equal(dashboard.stats.missingExits.length, 1);
+    const teamAfter = await (await request('/users')).json();
+    assert.equal(teamAfter.find(u => u.id === 2).openShift, false);
+    assert.equal(teamAfter.find(u => u.id === 2).shiftClosed, true);
+    const lateReport = await (await request(`/reports?from=${today}&to=${today}&userId=2`)).json();
+    assert.equal(lateReport.days[0].status, 'missing_exit');
+    assert.equal(lateReport.summary.missingExitDays, 1);
+    assert.equal(lateReport.summary.unmarkedDays, 1);
+    const lateExcelResponse = await request(`/reports/export?from=${today}&to=${today}&userId=2`);
+    const lateExcel = new ExcelJS.Workbook(); await lateExcel.xlsx.load(Buffer.from(await lateExcelResponse.arrayBuffer()));
+    assert.equal(lateExcel.getWorksheet('Detalle diario').getCell('Q7').value, '17:05');
+    assert.equal(lateExcel.getWorksheet('Detalle diario').getCell('R7').value, 'Sin marcar (salida)');
   } finally {
     await Promise.all([new Promise(resolve => server.close(resolve)), new Promise(resolve => fake.close(resolve))]);
   }

@@ -116,6 +116,17 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 - Cada marcación conserva una copia del horario vigente para proteger el historial.
 - Zona horaria de reportes: `America/Lima`.
 
+## Plazo para marcar la salida
+
+- La salida debe marcarse hasta **5 minutos después del horario de salida**: con horario 17:00, el plazo máximo es **17:05**.
+- Vencido el plazo, la jornada queda como **"sin marcar"** y la API rechaza la salida (la foto ni siquiera se sube al almacenamiento).
+- Los reportes también marcan **"sin marcar"** a todo colaborador activo que no registró nada en un día con horario asignado; no se generan ausencias anteriores a su alta.
+- Los días con la misma hora de entrada y salida se consideran días de descanso y no generan ausencias.
+- En las jornadas nocturnas (p. ej. 22:00 → 06:00) el plazo vence a las 06:05 del día siguiente.
+- Para entradas históricas o regularizadas que se marcaron con el plazo ya vencido, la salida dispone de sus propios 5 minutos desde esa marcación para no dejar la jornada sin cerrar.
+- Una jornada abierta que venció ya no cuenta como "presente" y se lista en el panel del SuperAdmin como *salida sin marcar*.
+- La regla vive en `shared/schedule.js` y la usan la API y el frontend, de modo que los plazos se muestran igual en el celular y en los reportes.
+
 ## Límites y permisos
 
 - Fotografías: máximo **4 MB**, compatible con el límite de solicitudes de Vercel.
@@ -174,16 +185,24 @@ Despliega API y frontend juntos después de aplicar la migración.
   se habilita a las 13:00; si lo olvidan, sigue pendiente y acepta el retorno real
   después, registrando la demora. No se cierra automáticamente ni se inventa la
   hora de retorno. Se permite cerrar jornada con almuerzo sin finalizar para no
-  impedir la salida, pero queda señalado en el reporte.
+  impedir la salida dentro de su plazo de 5 minutos, pero queda señalado en el reporte.
+  Una vez vencida la salida se cierra la jornada y ya no admite más marcaciones.
 - **Tiempo trabajado:** entrada–salida menos el descanso registrado. Si falta el
   fin del almuerzo, se descuenta provisionalmente desde su inicio hasta la salida;
   revisar esa incidencia antes de usar el reporte para liquidaciones. Los registros
   antiguos sin almuerzo conservan su cálculo anterior.
-- **Alcance de ausencias:** como no existen días de descanso/feriados ni historial
-  de activación en este modelo, las jornadas sin registros se calculan con el equipo
+- **Alcance de ausencias:** los días con entrada igual a salida son descansos y no generan ausencias.
+  Como no hay calendario de feriados ni historial de activación, las jornadas sin registros se calculan con el equipo
   activo y el horario semanal actual, desde la creación de la cuenta. Las personas
-  inactivas conservan sus días con marcaciones. No se asumen feriados ni descansos.
-- Todas las validaciones usan **America/Lima** y se repiten en API y base de datos;
-  cambiar el reloj del celular o usar otra pestaña no permite saltarlas.
+  inactivas conservan sus días con marcaciones. No se asumen feriados ni descansos distintos de los horarios entrada = salida.
+- Las reglas usan **America/Lima** y el reloj del servidor, no el del celular.
+  La API valida todos los plazos antes de subir la evidencia; el trigger refuerza
+  la entrada única, su plazo de una hora y las reglas de almuerzo.
+- Se conserva la regla de salida de la PR #3: máximo 5 minutos desde la salida
+  programada (incluidos turnos nocturnos). El estado está disponible en inicio,
+  Mi equipo, reportes y Excel. No admite una segunda entrada en la misma jornada;
+  la entrada de la siguiente jornada vuelve a estar disponible en su plazo normal.
+- La integración de ambas PR no requiere SQL adicional sobre la migración
+  `20261117_attendance_lunch.sql` ya aplicada al proyecto Punto.
 
 Verificación local: `npm test` y `npm run build`.
