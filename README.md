@@ -104,7 +104,7 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 - URLs firmadas temporales para proteger las evidencias.
 - Cálculo y almacenamiento de tardanza, salida anticipada y tiempo extra.
 - Reportes por mes, día o rango de fechas, con resumen por persona y detalle diario.
-- Exportación de marcaciones y reportes a CSV compatible con Excel.
+- Exportación de reportes a Excel (.xlsx) con formato profesional y de marcaciones a CSV.
 - Diseño responsive y animaciones con soporte para `prefers-reduced-motion`.
 
 ## Cálculo de jornada
@@ -112,7 +112,7 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 - **Tardanza:** minutos entre la hora programada de ingreso y la primera entrada.
 - **Tiempo extra:** minutos entre la hora programada de salida y la salida registrada.
 - **Salida anticipada:** minutos entre la salida registrada y el horario programado.
-- **Tiempo trabajado:** diferencia entre la primera entrada y la última salida del mismo día.
+- **Tiempo trabajado:** diferencia entre entrada y salida de la jornada, descontando el almuerzo registrado (ver reglas actualizadas abajo).
 - Cada marcación conserva una copia del horario vigente para proteger el historial.
 - Zona horaria de reportes: `America/Lima`.
 
@@ -123,7 +123,7 @@ No subas `.env` al repositorio. Configura las variables por separado para Produc
 - Los reportes también marcan **"sin marcar"** a todo colaborador activo que no registró nada en un día con horario asignado; no se generan ausencias anteriores a su alta.
 - Los días con la misma hora de entrada y salida se consideran días de descanso y no generan ausencias.
 - En las jornadas nocturnas (p. ej. 22:00 → 06:00) el plazo vence a las 06:05 del día siguiente.
-- Si la entrada se marcó con el plazo ya vencido, la salida dispone de sus propios 5 minutos desde esa marcación para no dejar la jornada sin cerrar.
+- Para entradas históricas o regularizadas que se marcaron con el plazo ya vencido, la salida dispone de sus propios 5 minutos desde esa marcación para no dejar la jornada sin cerrar.
 - Una jornada abierta que venció ya no cuenta como "presente" y se lista en el panel del SuperAdmin como *salida sin marcar*.
 - La regla vive en `shared/schedule.js` y la usan la API y el frontend, de modo que los plazos se muestran igual en el celular y en los reportes.
 
@@ -157,3 +157,52 @@ El archivo SQLite anterior, si existe en `server/data/punto.db`, se conserva ún
 ### Actualización: horarios por día
 
 Para una instalación existente, ejecuta `supabase/migrations/20261111_weekly_schedule.sql` en el SQL Editor de Supabase antes de desplegar la aplicación. Los usuarios existentes mantienen su horario anterior para todos los días; el SuperAdmin puede modificar cada día desde Mi equipo. Cada marcación conserva el horario aplicado, por lo que los reportes anteriores no cambian. Los horarios se interpretan en America/Lima.
+
+### Actualización: Excel, entradas únicas y almuerzo (17/11/2026)
+
+**Antes de desplegar esta versión en una instalación existente**, ejecuta
+`supabase/migrations/20261117_attendance_lunch.sql` en el SQL Editor del proyecto.
+Para instalaciones nuevas, `supabase/schema.sql` ya incluye estas reglas.
+La migración conserva los registros anteriores, agrega `work_day` para jornadas
+nocturnas y protege las nuevas marcaciones con un trigger que bloquea por usuario:
+dos solicitudes simultáneas no pueden registrar dos entradas de la misma jornada.
+Despliega API y frontend juntos después de aplicar la migración.
+
+- **Reportes (solo SuperAdmin):** fechas Desde / Hasta visibles por defecto,
+  inclusivas en hora de Lima; también hay selección mensual y por colaborador.
+  Rango máximo: 366 días. Los días futuros no generan ausencias.
+- **Excel `.xlsx`:** tres hojas (Resumen, Equipo y Detalle diario), portada de
+  marca, encabezados y bandas de color, filtros, paneles inmovilizados, totales,
+  duraciones numéricas en `h:mm`, estados destacados y configuración de impresión.
+  `/api/reports/export` ahora devuelve XLSX. `/api/export` conserva el CSV de registros.
+- **Entrada:** solo una por jornada, incluso después de registrar salida. Se admite
+  hasta exactamente una hora después del horario individual del día. Una vez
+  vencido el plazo, se deshabilita y aparece **Sin marcar**, sin fabricar una
+  marcación ni evidencia. El cálculo es automático al consultar estado/reportes;
+  no depende de que la persona abra la aplicación ni de un cron.
+- **Almuerzo:** botón propio con inicio y fin, ambos con foto y GPS. Se inicia desde
+  las 12:00 y antes de las 13:00. Empezar a las 12:40 solo deja 20 minutos. El fin
+  se habilita a las 13:00; si lo olvidan, sigue pendiente y acepta el retorno real
+  después, registrando la demora. No se cierra automáticamente ni se inventa la
+  hora de retorno. Se permite cerrar jornada con almuerzo sin finalizar para no
+  impedir la salida dentro de su plazo de 5 minutos, pero queda señalado en el reporte.
+  Una vez vencida la salida se cierra la jornada y ya no admite más marcaciones.
+- **Tiempo trabajado:** entrada–salida menos el descanso registrado. Si falta el
+  fin del almuerzo, se descuenta provisionalmente desde su inicio hasta la salida;
+  revisar esa incidencia antes de usar el reporte para liquidaciones. Los registros
+  antiguos sin almuerzo conservan su cálculo anterior.
+- **Alcance de ausencias:** los días con entrada igual a salida son descansos y no generan ausencias.
+  Como no hay calendario de feriados ni historial de activación, las jornadas sin registros se calculan con el equipo
+  activo y el horario semanal actual, desde la creación de la cuenta. Las personas
+  inactivas conservan sus días con marcaciones. No se asumen feriados ni descansos distintos de los horarios entrada = salida.
+- Las reglas usan **America/Lima** y el reloj del servidor, no el del celular.
+  La API valida todos los plazos antes de subir la evidencia; el trigger refuerza
+  la entrada única, su plazo de una hora y las reglas de almuerzo.
+- Se conserva la regla de salida de la PR #3: máximo 5 minutos desde la salida
+  programada (incluidos turnos nocturnos). El estado está disponible en inicio,
+  Mi equipo, reportes y Excel. No admite una segunda entrada en la misma jornada;
+  la entrada de la siguiente jornada vuelve a estar disponible en su plazo normal.
+- La integración de ambas PR no requiere SQL adicional sobre la migración
+  `20261117_attendance_lunch.sql` ya aplicada al proyecto Punto.
+
+Verificación local: `npm test` y `npm run build`.

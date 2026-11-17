@@ -1,8 +1,9 @@
+import { markLabel } from '../utils.js';
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BarChart3, Camera, Check, ClipboardList, Clock3, LogIn, LogOut, MapPin, Navigation, Sparkles, TrendingUp, UsersRound } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BarChart3, Camera, Check, ClipboardList, Clock3, LogIn, LogOut, MapPin, Navigation, Sparkles, TrendingUp, UsersRound, Utensils } from 'lucide-react';
 import AttendanceItem from '../components/AttendanceItem.jsx';
 import { Avatar, CloseButton, EmptyState, Modal, Skeleton } from '../components/UI.jsx';
-import { EXIT_GRACE_MINUTES, formatDate, formatMinutes, formatTime, greeting, longToday, mapsUrl, maxExitTime } from '../utils.js';
+import { formatMinutes, formatTime, greeting, longToday, mapsUrl } from '../utils.js';
 
 function LiveClock() {
   const [time, setTime] = useState(new Date());
@@ -10,15 +11,16 @@ function LiveClock() {
   return <div className="live-clock"><span>{new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(time)}</span><small>HORA LOCAL · LIMA</small></div>;
 }
 
-export default function Dashboard({ user, data, status, loading, onMark, onNavigate }) {
+export default function Dashboard({ user, data, loading, onMark, onNavigate, onLunch }) {
   const [photo, setPhoto] = useState(null);
   const admin = user.role === 'superadmin';
   const stats = data?.stats || {};
+  const status = data?.attendanceStatus;
   const missingExits = stats.missingExits || [];
   const cards = admin ? [
     { label: 'Presentes ahora', value: stats.present, icon: UsersRound, tone: 'green', note: `de ${stats.team || 0} colaboradores` },
     { label: 'Entradas hoy', value: stats.entries || 0, icon: LogIn, tone: 'blue', note: 'marcaciones verificadas' },
-    { label: 'Salidas hoy', value: stats.exits || 0, icon: LogOut, tone: 'orange', note: missingExits.length ? `${missingExits.length} sin marcar` : 'jornadas cerradas' },
+    { label: 'Salidas hoy', value: stats.exits || 0, icon: LogOut, tone: 'orange', note: `${missingExits.length} salidas sin marcar` },
     { label: 'Equipo activo', value: stats.team || 0, icon: ClipboardList, tone: 'purple', note: 'usuarios habilitados' },
   ] : [
     { label: 'Mis entradas', value: stats.entries || 0, icon: LogIn, tone: 'green', note: 'registradas hoy' },
@@ -27,7 +29,6 @@ export default function Dashboard({ user, data, status, loading, onMark, onNavig
     { label: 'Tiempo extra', value: formatMinutes(stats.overtime_minutes), icon: TrendingUp, tone: 'purple', note: 'acumulado hoy', time: true },
   ];
   const progress = stats.team ? Math.min(100, Math.round(((stats.present || 0) / stats.team) * 100)) : 0;
-  const myDeadline = status?.exitPending ? status.exitDeadline : maxExitTime({ entry: status?.scheduledEntry, exit: status?.scheduledExit });
 
   return <div className="page dashboard-page page-enter">
     <div className="page-greeting"><div><p>{longToday()}</p><h1>{greeting()}, <span>{user.name.split(' ')[0]}.</span></h1></div><span className="greeting-spark"><Sparkles size={20} /></span></div>
@@ -42,9 +43,15 @@ export default function Dashboard({ user, data, status, loading, onMark, onNavig
       <div className="hero-pin" aria-hidden="true"><span className="pin-ring ring-a" /><span className="pin-ring ring-b" /><span className="pin-center"><MapPin size={28} /><Check size={13} /></span></div>
     </section>
 
+    <section className="dashboard-lunch-card"><span className="lunch-card-icon"><Utensils size={23} /></span><div><span className="section-kicker">TU DESCANSO</span><h3>Almuerzo · 12:00 — 13:00</h3><p>{data?.attendanceStatus?.lunchStatus === 'overdue' ? 'Falta marcar tu retorno. Se registrará la hora real.' : data?.attendanceStatus?.lunchStatus === 'finished' ? 'Tu retorno del almuerzo ya está registrado.' : 'Empezar después no extiende tu descanso. Marca el fin a las 13:00.'}</p></div><button className="secondary-button" onClick={() => onLunch?.(data?.attendanceStatus?.allowedTypes.includes('lunch_end') ? 'lunch_end' : 'lunch_start')}>Almuerzo <ArrowRight size={16} /></button></section>
+    {admin && <div className="missing-entry-banner"><Clock3 size={16} /><span><strong>{stats.missing || 0} sin marcar</strong> · Sin entrada una hora después de su ingreso programado.</span><button className="text-button" onClick={() => onNavigate('reports')}>Ver reporte <ArrowRight size={14} /></button></div>}
+    {!admin && data?.attendanceStatus?.missingEntry && <div className="form-error standalone-error">Entrada sin marcar. Ya venció el plazo de una hora desde tu ingreso programado.</div>}
+
     <div className={`stats-grid ${!admin ? 'stats-two' : ''}`}>
       {cards.map(({ label, value, icon: Icon, tone, note, time }, i) => <article className="stat-card" key={label} style={{ '--delay': `${i * 60}ms` }}><div className={`stat-icon ${tone}`}><Icon size={20} /></div><div className={`stat-value ${time ? 'stat-time' : ''}`}>{loading ? <Skeleton className="number-skeleton" /> : String(value ?? 0).padStart(2, '0')}</div><h3>{label}</h3><p>{note}</p></article>)}
     </div>
+
+    {admin && <section className="content-card missing-exit-card"><div className="section-heading"><div><span className="section-kicker">PLAZO VENCIDO</span><h2>Salidas sin marcar</h2></div><span className={`report-count-pill ${missingExits.length ? 'alert' : ''}`}>{missingExits.length}</span></div>{missingExits.length ? <div className="missing-exit-list">{missingExits.map(item => <div className="missing-exit-row" key={`${item.userId}-${item.day}`}><Avatar user={item} size="sm" /><div><strong>{item.name}</strong><span>{item.day} · Debía marcar hasta las {item.exitDeadline}</span></div></div>)}</div> : <p className="missing-exit-empty">No hay salidas con el plazo vencido en las jornadas evaluadas.</p>}</section>}
 
     <div className="dashboard-columns">
       <section className="content-card recent-card">
@@ -57,16 +64,12 @@ export default function Dashboard({ user, data, status, loading, onMark, onNavig
       <aside className="dashboard-aside">
         <section className="content-card team-pulse-card">
           <div className="section-heading"><div><span className="section-kicker">{admin ? 'PULSO DEL EQUIPO' : 'TU JORNADA'}</span><h2>{admin ? 'Asistencia de hoy' : 'Estado actual'}</h2></div></div>
-          {admin ? <><div className="progress-wrap"><div className="progress-ring" style={{ '--progress': `${progress * 3.6}deg` }}><div><strong>{progress}%</strong><span>presente</span></div></div><div className="progress-copy"><strong>{stats.present || 0} de {stats.team || 0}</strong><span>colaboradores en jornada</span><div className="mini-avatars"><Avatar user={user} size="sm" /><span className="mini-avatar-more"><UsersRound size={15} /></span></div></div></div><button className="secondary-button full-width" onClick={() => onNavigate('team')}>Ver mi equipo <ArrowRight size={17} /></button><button className="report-link-button" onClick={() => onNavigate('reports')}><BarChart3 size={16} /> Ver reportes de asistencia <ArrowUpRight size={15} /></button></> : <><div className="employee-schedule"><Clock3 size={18} /><div><small>Tu horario asignado</small><strong>{user.scheduledEntry || '08:00'} <span>→</span> {user.scheduledExit || '17:00'}</strong></div></div>{status && <div className="exit-deadline-note"><Clock3 size={14} /><span>{status.priorExit ? <>Tu salida del {formatDate(`${status.priorExit.day}T12:00:00`, { day: '2-digit', month: 'long' })} quedó <strong>sin marcar</strong>.</> : <>La salida se puede marcar hasta las <strong>{myDeadline}</strong> ({EXIT_GRACE_MINUTES} min de plazo).</>}</span></div>}<div className={`work-status-illustration ${stats.present ? 'active' : ''}`}><span><Navigation size={29} /></span><div><strong>{stats.present ? 'Jornada en curso' : 'Fuera de jornada'}</strong><p>{stats.present ? 'Tu entrada ya quedó registrada.' : 'Marca tu entrada cuando estés listo.'}</p></div></div><button className="secondary-button full-width" onClick={onMark}>{stats.present ? 'Registrar mi salida' : 'Registrar mi entrada'} <ArrowRight size={17} /></button></>}
+          {admin ? <><div className="progress-wrap"><div className="progress-ring" style={{ '--progress': `${progress * 3.6}deg` }}><div><strong>{progress}%</strong><span>presente</span></div></div><div className="progress-copy"><strong>{stats.present || 0} de {stats.team || 0}</strong><span>colaboradores en jornada</span><div className="mini-avatars"><Avatar user={user} size="sm" /><span className="mini-avatar-more"><UsersRound size={15} /></span></div></div></div><button className="secondary-button full-width" onClick={() => onNavigate('team')}>Ver mi equipo <ArrowRight size={17} /></button><button className="report-link-button" onClick={() => onNavigate('reports')}><BarChart3 size={16} /> Ver reportes de asistencia <ArrowUpRight size={15} /></button></> : <><div className="employee-schedule"><Clock3 size={18} /><div><small>Tu horario asignado</small><strong>{user.scheduledEntry || '08:00'} <span>→</span> {user.scheduledExit || '17:00'}</strong></div></div>{status && <div className={`exit-deadline-note ${status.priorExit ? 'expired' : ''}`}><Clock3 size={14} /><span>{status.priorExit ? <>Tu salida del {status.priorExit.day} quedó <strong>sin marcar</strong> (plazo {status.priorExit.deadline}).</> : <>Salida hasta las <strong>{status.exitDeadline}</strong> · 5 minutos de tolerancia.</>}</span></div>}<div className={`work-status-illustration ${stats.present ? 'active' : ''}`}><span><Navigation size={29} /></span><div><strong>{stats.present ? 'Jornada en curso' : 'Fuera de jornada'}</strong><p>{stats.present ? 'Tu entrada ya quedó registrada.' : 'Marca tu entrada cuando estés listo.'}</p></div></div><button className="secondary-button full-width" onClick={onMark}>{status?.missingExit ? 'Ver mis marcaciones' : stats.present ? 'Registrar mi salida' : 'Registrar mi entrada'} <ArrowRight size={17} /></button></>}
         </section>
-        {admin && <section className="content-card missing-exit-card"><div className="section-heading"><div><span className="section-kicker">PLAZO VENCIDO</span><h2>Salidas sin marcar</h2></div><span className={`report-count-pill ${missingExits.length ? 'alert' : ''}`}>{missingExits.length}</span></div>
-          {missingExits.length ? <div className="missing-exit-list">{missingExits.map(item => <div className="missing-exit-row" key={item.userId}><Avatar user={item} size="sm" /><div><strong>{item.name}</strong><span>{item.lateMark ? `Entrada marcada después del plazo · salida ${item.scheduledExit}` : `Debía marcar salida hasta las ${item.exitDeadline}`}</span></div></div>)}</div> : <p className="missing-exit-empty">Todos los colaboradores registraron su salida dentro del plazo de {EXIT_GRACE_MINUTES} minutos.</p>}
-          <button className="report-link-button" onClick={() => onNavigate('reports')}><BarChart3 size={16} /> Ver el reporte completo <ArrowUpRight size={15} /></button>
-        </section>}
         <section className="trust-note"><span><MapPin size={19} /></span><div><strong>Ubicación con propósito</strong><p>El GPS se captura solo al marcar. Tu ubicación no se rastrea en segundo plano.</p></div></section>
       </aside>
     </div>
 
-    {photo && <Modal onClose={() => setPhoto(null)} className="photo-detail-modal"><div className="photo-detail-image"><CloseButton onClick={() => setPhoto(null)} light /><img src={photo.photoUrl} alt="Registro de asistencia" /><span className={`type-badge ${photo.type === 'entry' ? 'entry' : 'exit'}`}>{photo.type === 'entry' ? 'Entrada' : 'Salida'}</span></div><div className="photo-detail-content"><div className="photo-detail-person"><Avatar user={admin ? photo : user} /><div><h3>{admin ? photo.name : user.name}</h3><p>{admin ? photo.position : user.position}</p></div><strong>{formatTime(photo.created_at)}</strong></div><a className="location-detail" href={mapsUrl(photo)} target="_blank" rel="noreferrer"><MapPin size={19} /><span><strong>Ubicación verificada</strong><small>{photo.latitude.toFixed(5)}, {photo.longitude.toFixed(5)}</small></span><ArrowUpRight size={18} /></a></div></Modal>}
+    {photo && <Modal onClose={() => setPhoto(null)} className="photo-detail-modal"><div className="photo-detail-image"><CloseButton onClick={() => setPhoto(null)} light /><img src={photo.photoUrl} alt="Registro de asistencia" /><span className={`type-badge ${photo.type.startsWith('lunch_') ? 'lunch' : photo.type === 'entry' ? 'entry' : 'exit'}`}>{markLabel(photo.type)}</span></div><div className="photo-detail-content"><div className="photo-detail-person"><Avatar user={admin ? photo : user} /><div><h3>{admin ? photo.name : user.name}</h3><p>{admin ? photo.position : user.position}</p></div><strong>{formatTime(photo.created_at)}</strong></div><a className="location-detail" href={mapsUrl(photo)} target="_blank" rel="noreferrer"><MapPin size={19} /><span><strong>Ubicación verificada</strong><small>{photo.latitude.toFixed(5)}, {photo.longitude.toFixed(5)}</small></span><ArrowUpRight size={18} /></a></div></Modal>}
   </div>;
 }

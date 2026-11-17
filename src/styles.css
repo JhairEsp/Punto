@@ -902,3 +902,42 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .weekly-summary { display: grid; gap: 5px; margin-top: 8px; }
 .weekly-summary > div { display: flex; justify-content: space-between; gap: 20px; font-size: 13px; }
 .weekly-summary > div strong { font-size: 13px; }
+
+/* Reglas de jornada y descanso */
+.attendance-type-switch > button:disabled { opacity: .5; cursor: not-allowed; background: #f4f5f3; }
+.attendance-type-switch > button:disabled strong { color: #6b756f; }
+.attendance-type-switch > button.active.lunch { border-color: #97bdb4; background: #eaf5f1; color: #256a58; }
+.attendance-type-switch small { line-height: 1.5; }
+.type-badge.lunch, .record-type-icon.lunch, .summary-icon.lunch, .time-flag.lunch { background: #e8f1ee; color: #256a58; }
+.lunch-notice { display: flex; gap: 10px; padding: 14px; margin-top: 12px; background: #eff6f1; color: #366753; border: 1px solid #dae9df; border-radius: 13px; }
+.lunch-notice > svg { flex-shrink: 0; margin-top: 2px; }
+.lunch-notice strong { font-size: 11px; }
+.lunch-notice p { margin: 5px 0 0; font-size: 10px; line-height: 1.6; }
+.lunch-notice.warning { background: #fff5e8; color: #916024; border-color: #f2dcbd; }
+.dashboard-lunch-card { display: flex; align-items: center; gap: 17px; padding: 22px; margin: 20px 0; border: 1px solid #dce8e0; border-radius: 20px; background: linear-gradient(120deg, #f1f8ef, #fff); }
+.lunch-card-icon { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 15px; color: #366753; background: #e2efdf; }
+.dashboard-lunch-card > div { flex: 1; }
+.dashboard-lunch-card h3 { margin: 5px 0; font-size: 15px; }
+.dashboard-lunch-card p { margin: 0; font-size: 11px; color: #68796e; line-height: 1.7; }
+.missing-entry-banner { display: flex; align-items: center; gap: 10px; background: #fff6eb; color: #946134; padding: 14px 18px; border-radius: 13px; margin: 0 0 20px; font-size: 11px; }
+.missing-entry-banner > span { flex: 1; }
+.lunch-table-times { display: block; white-space: nowrap; font-size: 10px; }
+.lunch-table-times small { display: block; margin-top: 6px; color: #66796d; }
+.lunch-table-times small.lunch-alert { color: #a26038; }
+.day-status.missing_entry { color: #a83c38; background: #fdebe9; }
+.day-status.pending { color: #69766e; background: #edf0ec; }
+.type-filter { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .dashboard-lunch-card { flex-wrap: wrap; gap: 12px; padding: 17px; }
+  .dashboard-lunch-card > div { min-width: 190px; }
+  .dashboard-lunch-card > button { width: 100%; }
+  .missing-entry-banner { flex-wrap: wrap; }
+  .missing-entry-banner > span { min-width: 190px; }
+  .attendance-type-switch > button { min-height: 88px; }
+  .attendance-type-switch small { font-size: 8px; }
+  .attendance-submit { font-size: 10px; }
+}
+.records-summary { flex-wrap: wrap; }
+.records-page .filter-row { flex-wrap: wrap; }
+.records-page .type-filter { min-height: 40px; }
+.records-page .type-filter button { min-height: 32px; }

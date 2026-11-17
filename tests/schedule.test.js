@@ -65,3 +65,11 @@ test('el plazo usa la hora de Lima, no UTC', () => {
   const result = exitStatus({ day: '2026-11-12', entryAt: '2026-11-12T13:00:00-05:00', schedule, now: at('2026-11-12T22:10:00Z') });
   assert.equal(result.status, 'missing');
 });
+
+test('la tolerancia que cruza medianoche no vence antes de tiempo', () => {
+  const schedule = { entry: '08:00', exit: '23:58' };
+  const result = exitStatus({ day: '2026-11-17', entryAt: '2026-11-17T08:00:00-05:00', schedule, now: '2026-11-18T00:03:00-05:00' });
+  assert.equal(result.status, 'pending');
+  assert.equal(result.limitDay, '2026-11-18');
+  assert.equal(exitStatus({ day: '2026-11-17', entryAt: '2026-11-17T08:00:00-05:00', schedule, now: '2026-11-18T00:03:01-05:00' }).status, 'missing');
+});

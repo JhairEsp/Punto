@@ -71,10 +71,10 @@ export function exitStatus({ day, entryAt, exitAt = null, schedule = {}, now = n
   if (exitAt) return { status: 'recorded', deadline: null, limitAt: null, lateMark: false, scheduleExit: exitDeadline(schedule).scheduledExit };
   const deadline = exitDeadline(schedule);
   // En jornadas nocturnas el plazo cae al día siguiente (06:00 → 06:05 del día + 1).
-  const limitDay = deadline.overnight ? addDays(day, 1) : day;
+  const nominalDay = deadline.overnight ? addDays(day, 1) : day;
   const limitMinutes = deadline.overnight ? deadline.lateBy : deadline.deadlineMinutes;
-  const limitAt = limaInstant(limitDay, limitMinutes).toISOString();
-  const today = limaDay(now);
+  const limitAt = limaInstant(nominalDay, limitMinutes).toISOString();
+  const limitDay = limaDay(limitAt);
   const nowMs = new Date(now).getTime();
   const limitMs = new Date(limitAt).getTime();
   // Una entrada marcada con el plazo ya vencido (p. ej. por una regularización) no pierde
@@ -82,12 +82,12 @@ export function exitStatus({ day, entryAt, exitAt = null, schedule = {}, now = n
   if (entryAt && new Date(entryAt).getTime() > limitMs) {
     const entryMs = new Date(entryAt).getTime();
     return {
-      deadline: deadline.deadline, limitAt, lateMark: true, scheduleExit: deadline.scheduledExit, limitDay,
+      deadline: timeOfMinutes(limaMinutes(new Date(entryMs + EXIT_GRACE_MINUTES * 60000))), limitAt: new Date(entryMs + EXIT_GRACE_MINUTES * 60000).toISOString(), lateMark: true, scheduleExit: deadline.scheduledExit, limitDay: limaDay(new Date(entryMs + EXIT_GRACE_MINUTES * 60000)),
       status: nowMs > entryMs + EXIT_GRACE_MINUTES * 60000 ? 'missing' : 'pending',
     };
   }
   const base = { deadline: deadline.deadline, limitAt, lateMark: false, scheduleExit: deadline.scheduledExit, limitDay };
   // Días ya cerrados y días con el plazo vencido se tratan igual: la salida quedó sin marcar.
-  if (limitDay < today || nowMs > limitMs) return { ...base, status: 'missing' };
+  if (nowMs > limitMs) return { ...base, status: 'missing' };
   return { ...base, status: 'pending' };
 }

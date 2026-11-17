@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Camera, Check, CheckCircle2, Clock3, Crosshair, ImagePlus, LoaderCircle, MapPin, Navigation, RefreshCw, ShieldCheck, SwitchCamera } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Camera, Check, CheckCircle2, Clock3, Crosshair, ImagePlus, LoaderCircle, MapPin, Navigation, RefreshCw, ShieldCheck, SwitchCamera, Utensils } from 'lucide-react';
 import { api } from '../api.js';
-import { formatDate, formatMinutes, formatTime, maxExitTime } from '../utils.js';
+import { formatMinutes, formatTime, markLabel } from '../utils.js';
 import { CloseButton, Modal, Spinner } from './UI.jsx';
 
-export default function AttendanceModal({ user, onClose, onRecorded, onViewHistory }) {
-  const [type, setType] = useState('entry');
+export default function AttendanceModal({ user, onClose, onRecorded, onViewHistory, initialType }) {
+  const [type, setType] = useState(initialType || 'entry');
+  const initialized = useRef(false);
   const [status, setStatus] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [photoUrl, setPhotoUrl] = useState('');
@@ -18,7 +19,6 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
   const [facingMode, setFacingMode] = useState('user');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [blocked, setBlocked] = useState(null);
   const [success, setSuccess] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -42,14 +42,15 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
     );
   };
   const loadStatus = async () => {
-    try {
-      const data = await api('/attendance/status');
-      setStatus(data); setType(data.nextType);
-      // La salida venció sin marcarse: se informa el plazo y se deja registrar una nueva entrada.
-      setBlocked(data.priorExit ? { message: data.priorExit.message, deadline: data.priorExit.deadline, day: data.priorExit.day, lateMark: data.priorExit.lateMark } : null);
-    } catch (err) { setError(err.message); }
+    try { const data = await api('/attendance/status'); setStatus(data); setType(current => {
+      const selected = !initialized.current && initialType ? initialType : current;
+      initialized.current = true;
+      return data.allowedTypes.includes(selected) ? selected : data.nextType;
+    }); } catch (err) { setError(err.message); }
   };
-  useEffect(() => { locate(); loadStatus(); return () => { stopCamera(); if (photoUrl) URL.revokeObjectURL(photoUrl); }; }, []);
+  useEffect(() => { locate(); loadStatus(); return () => stopCamera(); }, []);
+  useEffect(() => { if (success) return; const timer = setInterval(loadStatus, 15000); return () => clearInterval(timer); }, [success]);
+  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
   useEffect(() => {
     if (cameraState === 'active' && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
@@ -93,7 +94,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
   const retake = () => { if (photoUrl) URL.revokeObjectURL(photoUrl); setPhoto(null); setPhotoUrl(''); setCameraState('idle'); };
 
   const submit = async () => {
-    if (!photo || !location) return;
+    if (!photo || !location || !status?.allowedTypes.includes(type) || submitting) return;
     setSubmitting(true); setError('');
     const body = new FormData();
     body.append('type', type); body.append('photo', photo);
@@ -101,22 +102,30 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
     try {
       const data = await api('/attendance', { method: 'POST', body });
       setSuccess(data.record); stopCamera(); onRecorded(data.message);
-    } catch (err) {
-      setError(err.message);
-      if (err.status === 409) loadStatus();
-    } finally { setSubmitting(false); }
+    } catch (err) { setError(err.message); await loadStatus(); } finally { setSubmitting(false); }
   };
 
-  const entry = type === 'entry';
+  const completedType = success?.type || type;
+  const entry = completedType === 'entry';
+  const lunch = completedType.startsWith('lunch_');
+  const label = markLabel(completedType);
+  const options = [
+    { id: 'entry', icon: ArrowDownLeft, note: 'Una vez por jornada' },
+    { id: 'exit', icon: ArrowUpRight, note: status?.exitDeadline ? `Hasta las ${status.exitDeadline} · 5 min de tolerancia` : 'Finalizo mi jornada' },
+    { id: 'lunch_start', icon: Utensils, note: 'Disponible de 12:00 a 13:00' },
+    { id: 'lunch_end', icon: CheckCircle2, note: 'Debes marcar a las 13:00' },
+  ];
   return <Modal onClose={submitting ? undefined : onClose} full className="attendance-modal" labelledBy="attendance-title">
-    {success ? <div className="attendance-success"><div className="success-confetti"><i /><i /><i /><i /><i /><i /></div><div className="success-check"><span><Check size={43} strokeWidth={2.5} /></span><i className="success-ring ring-1" /><i className="success-ring ring-2" /></div><span className="section-kicker">MARCACIÓN COMPLETADA</span><h2>¡{entry ? 'Entrada' : 'Salida'} registrada!</h2><p>{entry ? 'Todo listo. Que tengas una jornada increíble' : 'Tu jornada quedó cerrada correctamente'}, {user.name.split(' ')[0]}.</p><div className="success-ticket"><div className="ticket-top"><span className={`record-type-icon ${entry ? 'entry' : 'exit'}`}>{entry ? <ArrowDownLeft size={22} /> : <ArrowUpRight size={22} />}</span><div><small>{entry ? 'ENTRADA' : 'SALIDA'}</small><strong>{formatTime(success.created_at)}</strong></div><CheckCircle2 size={24} /></div><div className={`schedule-result ${entry ? (success.late_minutes > 0 ? 'late' : 'ontime') : (success.overtime_minutes > 0 ? 'extra' : success.early_leave_minutes > 0 ? 'early' : 'ontime')}`}><Clock3 size={18} /><div><small>{entry ? `HORARIO DE INGRESO · ${success.scheduled_entry || status?.scheduledEntry || '08:00'}` : `HORARIO DE SALIDA · ${success.scheduled_exit || status?.scheduledExit || '17:00'}`}</small><strong>{entry ? (success.late_minutes > 0 ? `${formatMinutes(success.late_minutes)} de tardanza` : 'Llegaste a tiempo') : (success.overtime_minutes > 0 ? `${formatMinutes(success.overtime_minutes)} de tiempo extra` : success.early_leave_minutes > 0 ? `Saliste ${formatMinutes(success.early_leave_minutes)} antes` : 'Salida puntual')}</strong></div></div><div className="ticket-photo"><img src={photoUrl} alt="Foto registrada" /><span><Camera size={14} /> Evidencia guardada</span></div><div className="ticket-location"><MapPin size={18} /><div><strong>Ubicación GPS verificada</strong><span>{success.latitude.toFixed(5)}, {success.longitude.toFixed(5)}</span></div></div></div><button className="primary-button success-done" onClick={onClose}>Volver al inicio <ArrowRight size={18} /></button><button className="text-button" onClick={onViewHistory}>Ver mi historial</button></div> : <>
+    {success ? <div className="attendance-success"><div className="success-confetti"><i /><i /><i /><i /><i /><i /></div><div className="success-check"><span><Check size={43} strokeWidth={2.5} /></span><i className="success-ring ring-1" /><i className="success-ring ring-2" /></div><span className="section-kicker">MARCACIÓN COMPLETADA</span><h2 id="attendance-title">¡{label} registrada!</h2><p>{lunch ? (completedType === 'lunch_start' ? 'Buen provecho. Recuerda finalizar a las 13:00' : 'Tu retorno del almuerzo quedó registrado') : entry ? 'Todo listo. Que tengas una jornada increíble' : 'Tu jornada quedó cerrada correctamente'}, {user.name.split(' ')[0]}.</p><div className="success-ticket"><div className="ticket-top"><span className={`record-type-icon ${lunch ? 'lunch' : entry ? 'entry' : 'exit'}`}>{lunch ? <Utensils size={22} /> : entry ? <ArrowDownLeft size={22} /> : <ArrowUpRight size={22} />}</span><div><small>{label.toUpperCase()}</small><strong>{formatTime(success.created_at)}</strong></div><CheckCircle2 size={24} /></div>{lunch ? <div className="schedule-result ontime"><Utensils size={18} /><div><small>ALMUERZO · 12:00 — 13:00</small><strong>{completedType === 'lunch_start' ? 'El descanso termina a las 13:00, aunque empieces después.' : 'Hora real de retorno guardada.'}</strong></div></div> : <div className={`schedule-result ${entry ? (success.late_minutes > 0 ? 'late' : 'ontime') : (success.overtime_minutes > 0 ? 'extra' : success.early_leave_minutes > 0 ? 'early' : 'ontime')}`}><Clock3 size={18} /><div><small>{entry ? `HORARIO DE INGRESO · ${success.scheduled_entry || status?.scheduledEntry || '08:00'}` : `HORARIO DE SALIDA · ${success.scheduled_exit || status?.scheduledExit || '17:00'}`}</small><strong>{entry ? (success.late_minutes > 0 ? `${formatMinutes(success.late_minutes)} de tardanza` : 'Llegaste a tiempo') : (success.overtime_minutes > 0 ? `${formatMinutes(success.overtime_minutes)} de tiempo extra` : success.early_leave_minutes > 0 ? `Saliste ${formatMinutes(success.early_leave_minutes)} antes` : 'Salida puntual')}</strong></div></div>}<div className="ticket-photo"><img src={photoUrl} alt="Foto registrada" /><span><Camera size={14} /> Evidencia guardada</span></div><div className="ticket-location"><MapPin size={18} /><div><strong>Ubicación GPS verificada</strong><span>{success.latitude.toFixed(5)}, {success.longitude.toFixed(5)}</span></div></div></div><button className="primary-button success-done" onClick={onClose}>Volver al inicio <ArrowRight size={18} /></button><button className="text-button" onClick={onViewHistory}>Ver mi historial</button></div> : <>
       <header className="attendance-modal-header"><div><span className="section-kicker">NUEVA MARCACIÓN</span><h2 id="attendance-title">Registra tu momento<span>.</span></h2></div><CloseButton onClick={onClose} /></header>
       <div className="attendance-progress"><span className={photo ? 'done' : 'active'}><i>{photo ? <Check size={12} /> : '1'}</i> Foto</span><b /><span className={location ? 'done' : ''}><i>{location ? <Check size={12} /> : '2'}</i> Ubicación</span><b /><span><i>3</i> Confirmar</span></div>
       <div className="attendance-modal-scroll">
-        <div className="attendance-type-switch"><button className={entry ? 'active entry' : ''} disabled={!entry && !!status?.exitPending} title={!entry && status?.exitPending ? `Debes cerrar tu jornada: la salida se marca hasta las ${status.exitDeadline}.` : undefined} onClick={() => setType('entry')}><ArrowDownLeft size={19} /><span><strong>Entrada</strong><small>Comienzo mi jornada</small></span>{entry && <Check size={16} />}</button><button className={!entry ? 'active exit' : ''} disabled={entry && !!status?.priorExit} title={entry && status?.priorExit ? status.priorExit.message : undefined} onClick={() => setType('exit')}><ArrowUpRight size={19} /><span><strong>Salida</strong><small>{status?.priorExit ? 'Plazo vencido' : status?.exitPending ? `Hasta las ${status.exitDeadline}` : 'Finalizo mi jornada'}</small></span>{!entry && <Check size={16} />}</button></div>
-        {status?.last && <div className="last-mark-note"><ClockIcon /><span>Última marcación: <strong>{status.last.type === 'entry' ? 'Entrada' : 'Salida'}</strong> · {formatTime(status.last.created_at)}</span></div>}
-        {status && <div className="attendance-schedule-note"><Clock3 size={14} /><span>Tu horario: <strong>{status.scheduledEntry || '08:00'} — {status.scheduledExit || '17:00'}</strong> · plazo máximo de salida <strong>{maxExitTime({ entry: status.scheduledEntry, exit: status.scheduledExit })}</strong></span></div>}
-        {blocked && <div className="exit-window-note" role="status"><Clock3 size={16} /><div><strong>Salida sin marcar del {formatDate(blocked.day + 'T12:00:00', { day: '2-digit', month: 'long' })}</strong><span>{blocked.message} Puedes registrar tu siguiente entrada normalmente.</span></div></div>}
+        <div className="attendance-type-switch">{options.map(({ id, icon: Icon, note }) => <button key={id} type="button" className={type === id ? `active ${id.startsWith('lunch') ? 'lunch' : id}` : ''} disabled={!status?.allowedTypes.includes(id) || submitting} title={status?.reasons[id] || note} onClick={() => setType(id)}><Icon size={19} /><span><strong>{markLabel(id)}</strong><small>{status?.reasons[id] || note}</small></span>{type === id && <Check size={16} />}</button>)}</div>
+        {status?.last && <div className="last-mark-note"><ClockIcon /><span>Última marcación: <strong>{markLabel(status.last.type)}</strong> · {formatTime(status.last.created_at)}</span></div>}
+        {status && <div className="attendance-schedule-note"><Clock3 size={14} /><span>Tu horario: <strong>{status.scheduledEntry} — {status.scheduledExit}</strong> · Entrada hasta <strong>{formatTime(status.entryDeadline)}</strong></span></div>}
+        {status && <div className={`exit-deadline-note ${status.priorExit ? 'expired' : ''}`}><Clock3 size={14} /><span>{status.priorExit ? <>Salida del {status.priorExit.day}: <strong>sin marcar</strong>. Venció el plazo de las {status.priorExit.deadline}.</> : <>Salida hasta las <strong>{status.exitDeadline}</strong> · 5 minutos de tolerancia después del horario de salida.</>}</span></div>}
+        <div className={`lunch-notice ${status?.lunchStatus === 'overdue' || status?.missingEntry ? 'warning' : ''}`}><Utensils size={18} /><div><strong>{status?.missingEntry ? 'Entrada sin marcar' : status?.lunchStatus === 'overdue' ? 'Falta finalizar tu almuerzo' : 'Almuerzo fijo · 12:00 — 13:00'}</strong><p>{status?.missingEntry ? 'Pasó una hora desde tu ingreso programado. La entrada de esta jornada está cerrada.' : status?.lunchStatus === 'overdue' ? 'Debías marcar a las 13:00. Registra tu retorno ahora; se guardará la hora real.' : 'Si empiezas después de las 12:00, tu descanso igualmente termina a las 13:00. Debes marcar el fin.'}</p></div></div>
+        {status && !status.allowedTypes.length && <p className="capture-error">No tienes marcaciones disponibles en esta jornada.</p>}
 
         <section className="capture-section"><div className="capture-section-heading"><div><span className="step-number">01</span><div><h3>Tu foto de asistencia</h3><p>Una selfie rápida para validar tu identidad.</p></div></div>{photo && <button className="text-button" onClick={retake}><RefreshCw size={14} /> Repetir</button>}</div>
           <div className={`camera-view ${cameraState === 'active' ? 'camera-active' : ''} ${photoUrl ? 'has-photo' : ''}`}>
@@ -136,7 +145,7 @@ export default function AttendanceModal({ user, onClose, onRecorded, onViewHisto
         <div className="capture-privacy"><ShieldCheck size={17} /><span>Tus datos se usan únicamente para validar esta asistencia.</span></div>
         {error && <div className="form-error">{error}</div>}
       </div>
-      <footer className="attendance-submit-bar"><div className="submit-readiness"><span className={photo ? 'ready' : ''}>{photo ? <Check size={13} /> : <Camera size={13} />} Foto</span><span className={location ? 'ready' : ''}>{location ? <Check size={13} /> : <MapPin size={13} />} GPS</span></div><button className="primary-button attendance-submit" disabled={!photo || !location || submitting} onClick={submit}>{submitting ? <><Spinner light /> Guardando...</> : <>Confirmar {entry ? 'entrada' : 'salida'} <ArrowRight size={19} /></>}</button></footer>
+      <footer className="attendance-submit-bar"><div className="submit-readiness"><span className={photo ? 'ready' : ''}>{photo ? <Check size={13} /> : <Camera size={13} />} Foto</span><span className={location ? 'ready' : ''}>{location ? <Check size={13} /> : <MapPin size={13} />} GPS</span></div><button className="primary-button attendance-submit" disabled={!photo || !location || submitting || !status?.allowedTypes.includes(type)} onClick={submit}>{submitting ? <><Spinner light /> Guardando...</> : <>Confirmar {label.toLowerCase()} <ArrowRight size={19} /></>}</button></footer>
     </>}
   </Modal>;
 }
