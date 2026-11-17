@@ -28,3 +28,7 @@ export const greeting = () => {
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: LIMA_TZ, hour: '2-digit', hour12: false }).format(new Date()));
   return hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
 };
+
+export const markLabel = type => ({ entry: 'Entrada', exit: 'Salida', lunch_start: 'Inicio de almuerzo', lunch_end: 'Fin de almuerzo' }[type] || 'Marcación');
+export const dayStatusLabel = status => ({ complete: 'Completo', missing_exit: 'Sin salida', missing_entry: 'Sin marcar', pending: 'Pendiente' }[status] || 'Pendiente');
+export const lunchStatusLabel = status => ({ complete: 'Finalizado', late: 'Retorno tardío', missing_end: 'Sin finalizar', active: 'En almuerzo', not_started: 'Sin registro' }[status] || 'Sin registro');

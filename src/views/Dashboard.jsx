@@ -1,5 +1,6 @@
+import { markLabel } from '../utils.js';
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BarChart3, Camera, Check, ClipboardList, Clock3, LogIn, LogOut, MapPin, Navigation, Sparkles, TrendingUp, UsersRound } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BarChart3, Camera, Check, ClipboardList, Clock3, LogIn, LogOut, MapPin, Navigation, Sparkles, TrendingUp, UsersRound, Utensils } from 'lucide-react';
 import AttendanceItem from '../components/AttendanceItem.jsx';
 import { Avatar, CloseButton, EmptyState, Modal, Skeleton } from '../components/UI.jsx';
 import { formatMinutes, formatTime, greeting, longToday, mapsUrl } from '../utils.js';
@@ -10,7 +11,7 @@ function LiveClock() {
   return <div className="live-clock"><span>{new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(time)}</span><small>HORA LOCAL · LIMA</small></div>;
 }
 
-export default function Dashboard({ user, data, loading, onMark, onNavigate }) {
+export default function Dashboard({ user, data, loading, onMark, onNavigate, onLunch }) {
   const [photo, setPhoto] = useState(null);
   const admin = user.role === 'superadmin';
   const stats = data?.stats || {};
@@ -40,6 +41,10 @@ export default function Dashboard({ user, data, loading, onMark, onNavigate }) {
       <div className="hero-pin" aria-hidden="true"><span className="pin-ring ring-a" /><span className="pin-ring ring-b" /><span className="pin-center"><MapPin size={28} /><Check size={13} /></span></div>
     </section>
 
+    <section className="dashboard-lunch-card"><span className="lunch-card-icon"><Utensils size={23} /></span><div><span className="section-kicker">TU DESCANSO</span><h3>Almuerzo · 12:00 — 13:00</h3><p>{data?.attendanceStatus?.lunchStatus === 'overdue' ? 'Falta marcar tu retorno. Se registrará la hora real.' : data?.attendanceStatus?.lunchStatus === 'finished' ? 'Tu retorno del almuerzo ya está registrado.' : 'Empezar después no extiende tu descanso. Marca el fin a las 13:00.'}</p></div><button className="secondary-button" onClick={() => onLunch?.(data?.attendanceStatus?.allowedTypes.includes('lunch_end') ? 'lunch_end' : 'lunch_start')}>Almuerzo <ArrowRight size={16} /></button></section>
+    {admin && <div className="missing-entry-banner"><Clock3 size={16} /><span><strong>{stats.missing || 0} sin marcar</strong> · Sin entrada una hora después de su ingreso programado.</span><button className="text-button" onClick={() => onNavigate('reports')}>Ver reporte <ArrowRight size={14} /></button></div>}
+    {!admin && data?.attendanceStatus?.missingEntry && <div className="form-error standalone-error">Entrada sin marcar. Ya venció el plazo de una hora desde tu ingreso programado.</div>}
+
     <div className={`stats-grid ${!admin ? 'stats-two' : ''}`}>
       {cards.map(({ label, value, icon: Icon, tone, note, time }, i) => <article className="stat-card" key={label} style={{ '--delay': `${i * 60}ms` }}><div className={`stat-icon ${tone}`}><Icon size={20} /></div><div className={`stat-value ${time ? 'stat-time' : ''}`}>{loading ? <Skeleton className="number-skeleton" /> : String(value ?? 0).padStart(2, '0')}</div><h3>{label}</h3><p>{note}</p></article>)}
     </div>
@@ -61,6 +66,6 @@ export default function Dashboard({ user, data, loading, onMark, onNavigate }) {
       </aside>
     </div>
 
-    {photo && <Modal onClose={() => setPhoto(null)} className="photo-detail-modal"><div className="photo-detail-image"><CloseButton onClick={() => setPhoto(null)} light /><img src={photo.photoUrl} alt="Registro de asistencia" /><span className={`type-badge ${photo.type === 'entry' ? 'entry' : 'exit'}`}>{photo.type === 'entry' ? 'Entrada' : 'Salida'}</span></div><div className="photo-detail-content"><div className="photo-detail-person"><Avatar user={admin ? photo : user} /><div><h3>{admin ? photo.name : user.name}</h3><p>{admin ? photo.position : user.position}</p></div><strong>{formatTime(photo.created_at)}</strong></div><a className="location-detail" href={mapsUrl(photo)} target="_blank" rel="noreferrer"><MapPin size={19} /><span><strong>Ubicación verificada</strong><small>{photo.latitude.toFixed(5)}, {photo.longitude.toFixed(5)}</small></span><ArrowUpRight size={18} /></a></div></Modal>}
+    {photo && <Modal onClose={() => setPhoto(null)} className="photo-detail-modal"><div className="photo-detail-image"><CloseButton onClick={() => setPhoto(null)} light /><img src={photo.photoUrl} alt="Registro de asistencia" /><span className={`type-badge ${photo.type.startsWith('lunch_') ? 'lunch' : photo.type === 'entry' ? 'entry' : 'exit'}`}>{markLabel(photo.type)}</span></div><div className="photo-detail-content"><div className="photo-detail-person"><Avatar user={admin ? photo : user} /><div><h3>{admin ? photo.name : user.name}</h3><p>{admin ? photo.position : user.position}</p></div><strong>{formatTime(photo.created_at)}</strong></div><a className="location-detail" href={mapsUrl(photo)} target="_blank" rel="noreferrer"><MapPin size={19} /><span><strong>Ubicación verificada</strong><small>{photo.latitude.toFixed(5)}, {photo.longitude.toFixed(5)}</small></span><ArrowUpRight size={18} /></a></div></Modal>}
   </div>;
 }
